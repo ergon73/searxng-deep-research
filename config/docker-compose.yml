@@ -44,7 +44,12 @@ services:
       # Passing them into the SearXNG container leaks the OpenRouter key
       # to a process that doesn't need it. See INSTALL.md for the new
       # config layout: config/.env for Docker, .env_llm for Python.
-      - ./.env_proxy
+      # NOTE (v0.8.1.1): .env_proxy is now optional (required: false).
+      # Clean installs that don't use per-engine proxies shouldn't have
+      # to create an empty .env_proxy just to make Compose happy.
+      # Requires Compose >= 2.24 (we run v5.1.4).
+      - path: ./.env_proxy
+        required: false
     networks:
       - searxng-internal
     healthcheck:

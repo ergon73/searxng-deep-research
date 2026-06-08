@@ -1,0 +1,53 @@
+# SearXNG + Valkey stack
+# Bind 127.0.0.1 only — do NOT expose to public internet
+# Container listens on 0.0.0.0:8080 (configured in settings.yml)
+
+services:
+  valkey:
+    image: valkey/valkey:9-alpine
+    container_name: searxng-valkey
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - searxng-internal
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    depends_on:
+      valkey:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8888:8080"   # host:container, only on localhost
+    volumes:
+      # Mount settings.yml напрямую (SearXNG читает /etc/searxng/settings.yml).
+      # Host path is overridable via SEARXNG_SETTINGS_PATH in .env_llm;
+      # default keeps the historical cwd-relative behaviour.
+      - ${SEARXNG_SETTINGS_PATH:-./searxng/settings.yml}:/etc/searxng/settings.yml:ro
+    environment:
+      # SEARXNG_SECRET: read from .env_llm via env_file. The ${VAR:?msg} form
+      # makes Compose fail fast if the secret is unset, so we never boot
+      # SearXNG with a placeholder (DR-05062026(3) §P0.3).
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env_llm}
+      - SEARXNG_BIND_ADDRESS=0.0.0.0
+      - SEARXNG_PORT=8080
+    env_file:
+      - ./.env_llm
+      - ./.env_proxy
+    networks:
+      - searxng-internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  searxng-internal:
+    driver: bridge

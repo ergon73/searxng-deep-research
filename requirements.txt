@@ -1,0 +1,4 @@
+trafilatura>=2.0,<3
+lxml>=5,<7
+rapidfuzz>=3,<4
+PyYAML>=6,<7

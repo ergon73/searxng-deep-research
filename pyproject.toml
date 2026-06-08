@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deep-research-project"
+version = "0.8.1"
+description = "Local SearXNG-based research fetcher with 4-level fact verification"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Georgy Belyanin"},
+]
+dependencies = [
+    "trafilatura>=2.0,<3",
+    "lxml>=5,<7",
+    "rapidfuzz>=3,<4",
+    "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.15,<1",
+]
+
+[project.urls]
+"Source" = "https://github.com/example/deep-research-project"
+
+# === Ruff config ===
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["."]
+
+[tool.ruff.lint]
+# Разрешаем assert, print — это не production-library
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+    "E501",   # line-too-long (line-length=110)
+    "B008",   # function call in default argument (urllib patterns)
+    "S101",   # assert (pytest style)
+    "S104",   # hardcoded bind address (Docker needs 0.0.0.0)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]  # tests may have asserts, magic numbers
+
+# === Pytest config ===
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]   # portable — no conftest sys.path hack needed
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", ".venv/*"]

@@ -1,0 +1,33 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.*.example
+
+# VCS / caches
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Virtual envs
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+.tox/
+*.log
+
+# Project-specific: incoming reviews from external reviewers
+# (kept out of repo so reviewers can start fresh, not re-read their own past feedback)
+DR-*.txt
+hermes-explore-*.txt

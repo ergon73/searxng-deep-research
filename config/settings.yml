@@ -1,0 +1,141 @@
+# SearXNG settings.yml — HYBRID configuration
+# Verified score 553.4 on benchmark, beats BASELINE (537.6) and TUNED (550.0)
+# See ARCHITECTURE.md for full decision log
+# This is the actual config we run, not a stub
+
+# Использовать встроенные defaults SearXNG, плюс наши overrides
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "hermes-local"
+  contact_url: ""
+  enable_metrics: false
+
+brand:
+  new_name: "Hermes Search"
+  private_instance: true
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "ru-RU"
+  formats:
+    - html
+    - json   # JSON обязателен для deep_research (иначе format=json → 403)
+
+server:
+  # В Docker контейнере bind на 0.0.0.0:8080 (тогда docker-compose пробрасывает 127.0.0.1:8888)
+  bind_address: "0.0.0.0"
+  port: 8080
+  # secret_key is provided via the SEARXNG_SECRET env var (docker-compose.yml
+  # passes it from .env_llm). Empty here means "use env override".
+  # See DR-05062026(3) §P0.3.
+  secret_key: ""
+  base_url: false
+  image_proxy: false
+  enable_http2: false
+  limiter: false  # single-user, лимитер выключен
+
+# Valkey (Redis fork, требуется в SearXNG 2026.6+)
+valkey:
+  url: "valkey://valkey:6379/0"
+
+outgoing:
+  request_timeout: 8.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: false
+
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: false
+    shortcut: ddg
+    timeout: 5.0
+
+  - name: duckduckgo news
+    engine: duckduckgo_news
+    disabled: false
+    shortcut: ddgn
+    timeout: 5.0
+
+  - name: duckduckgo definitions
+    engine: duckduckgo_definitions
+    disabled: false
+    shortcut: ddd
+    timeout: 5.0
+
+  - name: brave
+    engine: brave
+    disabled: false
+    shortcut: br
+    timeout: 6.0
+    # NOTE: brave is rate-limited upstream; "Suspended: too many requests" periodically
+    # Wait 5-10 min between heavy usage, or leave disabled.
+
+  - name: mojeek
+    engine: mojeek
+    disabled: false
+    shortcut: mj
+    timeout: 5.0
+
+  - name: presearch
+    engine: presearch
+    disabled: false
+    shortcut: ps
+    timeout: 5.0
+
+  - name: wikidata
+    engine: wikidata
+    disabled: false
+    shortcut: wd
+    timeout: 5.0
+
+  - name: bing
+    engine: bing
+    disabled: false
+    shortcut: bi
+    timeout: 6.0
+
+  - name: wikipedia
+    engine: wikipedia
+    disabled: false
+    shortcut: wp
+    timeout: 4.0
+
+  - name: arxiv
+    engine: arxiv
+    disabled: true
+    shortcut: arx
+    timeout: 6.0
+
+  - name: github
+    engine: github
+    disabled: false
+    shortcut: gh
+    timeout: 5.0
+
+  - name: stackoverflow
+    engine: stackoverflow
+    disabled: false
+    shortcut: stex
+    timeout: 5.0
+
+  - name: semantic scholar
+    engine: semantic_scholar
+    disabled: false
+    shortcut: ss
+    timeout: 6.0
+
+# limiter disabled (this is single-user)
+limiter: false
+
+ui:
+  static_path: ""
+  templates_path: ""
+  default_theme: simple
+  results_on_new_tab: false
+  advanced_search: false
+  query_in_title: false
+  infinite_scroll: false

@@ -1,0 +1,120 @@
+{
+  "version": "1.0.0",
+  "created": "2026-06-07",
+  "description": "Golden query set для hermes-deepresearch eval. Каждый query имеет ground truth — чтобы измерить QS до/после фиксов скиллов.",
+  "queries": [
+    {
+      "id": "q1_falcon9",
+      "query": "Сколько ступеней у ракеты Falcon 9 и в каком году первый запуск",
+      "expected_answer": "Falcon 9 имеет 2 ступени; первый запуск — 4 июня 2010 года.",
+      "expected_claims": [
+        "У Falcon 9 две ступени",
+        "Первый запуск в 2010 году"
+      ],
+      "expected_route": "technical",
+      "expected_grounded_entities": ["Falcon 9", "Сколько"],
+      "critical_content_nouns": ["ступеней", "ракеты", "запуск"],
+      "expected_year": 2010,
+      "expected_numeric": [9, 2, 2010],
+      "category": "factual_technical"
+    },
+    {
+      "id": "q2_eu_founding",
+      "query": "Когда был основан Евросоюз и сколько сейчас стран-членов",
+      "expected_answer": "ЕС основан в 1993 году (Маастрихтский договор); сейчас 27 стран-членов.",
+      "expected_claims": [
+        "ЕС основан в 1993 году",
+        "В ЕС 27 стран-членов"
+      ],
+      "expected_route": "wiki",
+      "expected_grounded_entities": ["Евросоюз", "Когда"],
+      "critical_content_nouns": ["основан", "стран", "членов"],
+      "expected_year": 1993,
+      "expected_numeric": [1993, 27],
+      "category": "factual_historical"
+    },
+    {
+      "id": "q3_iron_melting",
+      "query": "Какая температура плавления железа в градусах Цельсия",
+      "expected_answer": "Температура плавления железа — 1538°C.",
+      "expected_claims": [
+        "Температура плавления железа 1538°C"
+      ],
+      "expected_route": "wiki",
+      "expected_grounded_entities": ["Какая", "Цельсия"],
+      "critical_content_nouns": ["температура", "плавления", "железа", "градусах"],
+      "expected_numeric": [1538],
+      "category": "factual_scientific"
+    },
+    {
+      "id": "q4_apple_ceo",
+      "query": "Кто является CEO компании Apple в 2024 году",
+      "expected_answer": "CEO Apple — Tim Cook (Тим Кук).",
+      "expected_claims": [
+        "CEO Apple — Тим Кук"
+      ],
+      "expected_route": "news",
+      "expected_grounded_entities": ["Apple", "Кто"],
+      "critical_content_nouns": ["является", "компании", "году"],
+      "expected_year": 2024,
+      "expected_numeric": [2024],
+      "category": "factual_business"
+    },
+    {
+      "id": "q5_planets",
+      "query": "Сколько планет в Солнечной системе сейчас официально",
+      "expected_answer": "С 2006 года — 8 планет (Плутон исключён).",
+      "expected_claims": [
+        "В Солнечной системе 8 планет",
+        "Плутон не считается планетой с 2006 года"
+      ],
+      "expected_route": "wiki",
+      "expected_grounded_entities": ["Солнечной", "Сколько"],
+      "critical_content_nouns": ["планет", "официально"],
+      "expected_year": 2006,
+      "expected_numeric": [8, 2006],
+      "category": "factual_scientific_with_contradiction"
+    },
+    {
+      "id": "q6_tokyo",
+      "query": "Какой самый населённый город в мире по последним данным",
+      "expected_answer": "Токио (Япония) — самый населённый город мира.",
+      "expected_claims": [
+        "Самый населённый город — Токио"
+      ],
+      "expected_route": "wiki",
+      "expected_grounded_entities": ["Какой"],
+      "critical_content_nouns": ["населённый", "городу", "данным", "мире"],
+      "expected_numeric": [],
+      "category": "factual_geographic"
+    },
+    {
+      "id": "q7_gpt4",
+      "query": "В каком году был запущен GPT-4 от OpenAI",
+      "expected_answer": "GPT-4 был запущен в марте 2023 года.",
+      "expected_claims": [
+        "GPT-4 запущен в марте 2023"
+      ],
+      "expected_route": "news",
+      "expected_grounded_entities": ["GPT-4", "OpenAI", "Году"],
+      "critical_content_nouns": ["запущен"],
+      "expected_year": 2023,
+      "expected_numeric": [2023, 3],
+      "category": "factual_temporal"
+    },
+    {
+      "id": "q8_dark_matter",
+      "query": "Что такое тёмная материя простыми словами",
+      "expected_answer": "Тёмная материя — гипотетическая форма материи, не взаимодействующая с электромагнитным излучением; составляет ~27% массы Вселенной.",
+      "expected_claims": [
+        "Тёмная материя не излучает свет",
+        "Составляет большую часть массы Вселенной"
+      ],
+      "expected_route": "wiki",
+      "expected_grounded_entities": ["Что"],
+      "critical_content_nouns": ["материя", "словами", "простыми"],
+      "expected_numeric": [27],
+      "category": "conceptual_scientific"
+    }
+  ]
+}

@@ -27,8 +27,8 @@ import sys
 import time
 from pathlib import Path
 
-# Ensure imports
-sys.path.insert(0, "/opt/searxng/src")
+# Ensure imports — portable: derive src/ from this file's location, not /opt/searxng
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from query_adaptation import adapt_query, build_search_plan_preview
 from routing import classify_intent

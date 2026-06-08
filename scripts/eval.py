@@ -29,8 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Ensure PYTHONPATH
-sys.path.insert(0, "/opt/searxng/src")
+# Ensure PYTHONPATH — portable: derive src/ from this file's location, not /opt/searxng
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from query_adaptation import adapt_query
 from routing import classify_intent
@@ -38,12 +38,16 @@ from synthesis import synthesize
 from critical_review import review
 
 
-# Quality Score weights (должны match SKILL.md / audit)
-W_COVERAGE = 0.40
-W_NO_CONTRADICTIONS = 0.20
-W_CONFIDENCE = 0.20
-W_ROUTING_PRECISION = 0.10
-W_NO_CONFIRMATION = 0.10
+# Quality Score weights (sum = 1.0)
+# NOTE: `needs_confirmation` is intentionally NOT in the QS formula. Confirmation
+# is a safety gate — `True` means the system correctly identified a high-risk
+# or ambiguous query and asked for human review, not a quality defect.
+# Confirmation is still tracked in result.needs_confirmation and reported separately.
+W_COVERAGE = 0.45
+W_NO_CONTRADICTIONS = 0.22
+W_CONFIDENCE = 0.22
+W_ROUTING_PRECISION = 0.11
+# W_NO_CONFIRMATION removed in v0.8.0 (was penalising correct safety behaviour).
 
 # Penalty constants (для future extensions)
 PENALTY_LOW_CONFIDENCE = 0.0  # not used yet
@@ -357,19 +361,20 @@ def score_query(
             _run_online_pipeline(result)
 
         # 4. COMPUTE QS (works in both modes)
+        # `no_confirmation` kept in breakdown for diagnostic visibility, but NOT
+        # used in the QS formula (see weight comments above).
         result.qs_breakdown = {
             "coverage": result.coverage_score,
             "no_contradictions": 1.0 - result.contradiction_rate,
             "confidence": result.confidence,
             "routing_precision": 1.0 if result.route_match else 0.0,
-            "no_confirmation": 0.0 if result.needs_confirmation else 1.0,
+            "no_confirmation": 0.0 if result.needs_confirmation else 1.0,  # diagnostic only
         }
         result.qs = round(
             W_COVERAGE * result.qs_breakdown["coverage"]
             + W_NO_CONTRADICTIONS * result.qs_breakdown["no_contradictions"]
             + W_CONFIDENCE * result.qs_breakdown["confidence"]
-            + W_ROUTING_PRECISION * result.qs_breakdown["routing_precision"]
-            + W_NO_CONFIRMATION * result.qs_breakdown["no_confirmation"],
+            + W_ROUTING_PRECISION * result.qs_breakdown["routing_precision"],
             4,
         )
 

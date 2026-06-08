@@ -212,11 +212,61 @@
 
 ---
 
+# Phase 0 release hygiene (v0.8.0) — DONE 2026-06-08
+
+External review (`/tmp/hermes-recomendation-08062026.txt`, ChatGPT) highlighted repo
+hygiene gaps. Closed in v0.8.0, no research logic change.
+
+| Item | Status | Verification |
+|---|---|---|
+| README references non-existent `claim_modeling.py` | ✅ FIXED | `grep -r claim_modeling README.md` → 0 hits |
+| README says "private repository" (now public) | ✅ FIXED | line 41 updated |
+| `pyproject.toml` `Source` URL = `github.com/example/...` | ✅ FIXED | → `ergon73/searxng-deep-research` |
+| `pyproject.toml` version = 0.8.1 (mismatch with README v0.8) | ✅ FIXED | → 0.8.0 |
+| ARCHITECTURE.md says v0.7.3 / "94% rate" / "94%→96%" | ✅ FIXED | honest baseline only, v0.8.0 |
+| ARCHITECTURE.md references `/opt/searxng/DR-...` absolute path | ✅ FIXED | relative + "not in repo" note |
+| `scripts/{e2e_falcon9,e2e_smoke_llm,eval}.py` hardcoded `/opt/searxng/src` | ✅ FIXED | portable `Path(__file__).resolve().parents[1] / "src"` |
+| `config/docker-compose.yml` default volume `./searxng/settings.yml` (wrong) | ✅ FIXED | → `./settings.yml` |
+| `config/.env.example` missing | ✅ FIXED | new file with SEARXNG_SECRET + SEARXNG_SETTINGS_PATH |
+| `scripts/eval.py` QS penalises `needs_confirmation=True` | ✅ FIXED | weights redistributed (0.45/0.22/0.22/0.11), no_confirmation diagnostic only |
+| `config/.env_llm.example` references `/opt/searxng/.env_llm` absolute path | ✅ FIXED | relative + scoped to LLM only |
+| `config/.env_proxy.example` references `llm_verifier.py` (wrong) | ✅ FIXED | scoped to docker-compose `env_file` only |
+| `.gitignore` excludes `config/.env.example` (false positive on `.env.*` rule) | ✅ FIXED | added `!.env.example` |
+| `.gitignore` did not exclude `.git-credentials-store`, `.ssh/`, `.gnupg/` | ✅ FIXED | added |
+| `PYTHONPATH=src python3 -m pytest -q` | ✅ 404 passed in 25.35s |
+
+**Commits / PRs:** single commit `release-hygiene: v0.8.0 phase 0` on `ergon73/searxng-deep-research`.
+
+---
+
+# Backlog from 8 June 2026 external review (DEFERRED, no implementation timeline)
+
+ChatGPT review `/tmp/hermes-recomendation-08062026.txt` suggested several
+v0.9+ items. Tracked here as `DEFERRED`, not open — we do not have a commitment
+to implement them and they are not blocking v0.8.x.
+
+| Topic | Status | Notes |
+|---|---|---|
+| **#016** — `DEFERRED` Typed `ResearchState` (4-9 dataclasses) | backlog | Recommended start with 4 (ResearchState, SearchTask, Evidence, Claim), not 9 |
+| **#017** — `DEFERRED` `planner.py::build_research_plan()` | backlog | Uses `adapt_query()` + `classify_intent()` |
+| **#018** — `DEFERRED` `research_runner.py::deep_research_v2()` | backlog | Strangler refactor of legacy `deep_research()` |
+| **#019** — `DEFERRED` Span-level citations (Claim→EvidenceWindow→[N]) | backlog | Phase 4 of external plan |
+| **#020** — `DEFERRED` `gap_analysis.py` + iterative deepening (1-2 iter) | backlog | Phase 5 |
+| **#021** — `DEFERRED` Falsification tasks (`<query> criticism`, `debunked`, `опровержение`) | backlog | Phase 2 — but LLM-conditional dependent, low ROI on rule-based |
+| **#022** — `WONTFIX` Tavily/Exa/Firecrawl provider interface | rejected | Premature: 1 provider (SearXNG), no need to abstract |
+| **#023** — `WONTFIX` Qdrant/Neo4j | rejected | Premature: no claim/evidence model yet |
+| **#024** — `DEFERRED` LangGraph adapter | backlog | Only if checkpointing / human-in-the-loop / fault tolerance needed |
+| **#025** — `WONTFIX` Split eval into 5 separate evals (A/B/C/D/E) | rejected | Over-engineering for 1 metric, low ROI |
+| **#026** — `WONTFIX` `use_default_settings.engines.keep_only` rewrite | rejected | Current explicit engine list works, no reproducibility issue observed |
+| **#027** — `WONTFIX` Multi-agent roles in separate processes | rejected | Functions in one process are sufficient at this scale |
+
+---
+
 ## Verification commands (replay any time)
 
 ```bash
 cd /opt/searxng
-python3 -m pytest -q                          # 123 passed expected (post-Phase 0)
+python3 -m pytest -q                          # 404 passed (post-v0.8.0)
 python3 -m ruff check tests/                  # clean
 python3 -m ruff check src/                    # 16+15=31 pre-existing (WONTFIX #008)
 docker compose -f config/docker-compose.yml config  # OK
@@ -226,7 +276,7 @@ ls -la /opt/searxng/.env_llm                  # mode 0o600
 python3 -m pytest -q                                                            # repo root
 tmp=$(mktemp -d) && cp -a . "$tmp/project" && cd "$tmp/project" && \
   PYTHONPATH=src python3 -m pytest -q                                            # /tmp + PYTHONPATH
-cd "$tmp/project" && env -i PATH="$PATH" HOME="$PWD/.tmp-home" PYTHONPATH=src \
+cd "$tmp/project" && env -i PATH="$PATH" HOME="$$PWD/.tmp-home" PYTHONPATH=src \
   python3 -m pytest -q                                                            # /tmp + env -i
 rm -rf "$tmp"
 ```

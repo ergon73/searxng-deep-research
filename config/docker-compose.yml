@@ -27,14 +27,14 @@ services:
       - "127.0.0.1:8888:8080"   # host:container, only on localhost
     volumes:
       # Mount settings.yml напрямую (SearXNG читает /etc/searxng/settings.yml).
-      # Host path is overridable via SEARXNG_SETTINGS_PATH in .env_llm;
-      # default keeps the historical cwd-relative behaviour.
-      - ${SEARXNG_SETTINGS_PATH:-./searxng/settings.yml}:/etc/searxng/settings.yml:ro
+      # Host path is overridable via SEARXNG_SETTINGS_PATH in config/.env;
+      # default keeps the in-tree location (./settings.yml next to docker-compose.yml).
+      - ${SEARXNG_SETTINGS_PATH:-./settings.yml}:/etc/searxng/settings.yml:ro
     environment:
-      # SEARXNG_SECRET: read from .env_llm via env_file. The ${VAR:?msg} form
-      # makes Compose fail fast if the secret is unset, so we never boot
+      # SEARXNG_SECRET: read from config/.env (Compose interpolation). The ${VAR:?msg}
+      # form makes Compose fail fast if the secret is unset, so we never boot
       # SearXNG with a placeholder (DR-05062026(3) §P0.3).
-      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env_llm}
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in config/.env}
       - SEARXNG_BIND_ADDRESS=0.0.0.0
       - SEARXNG_PORT=8080
     env_file:

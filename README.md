@@ -8,7 +8,7 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 ## What this is
 
 - `src/hermes_deepresearch.py::deep_research()` — entry point
-- `src/evidence.py`, `src/routing.py`, `src/claim_modeling.py`, `src/synthesis.py`, `src/critical_review.py`, `src/llm_verifier.py` — pipeline stages
+- `src/evidence.py`, `src/routing.py`, `src/synthesis.py`, `src/critical_review.py`, `src/llm_verifier.py` — pipeline stages
 - `src/redact.py` — secret redaction (mandatory before archive/chat)
 - `src/hermes_searxng.py` — SearXNG JSON helper
 - `scripts/e2e_falcon9.py` — 8-stage end-to-end smoke (~2s)
@@ -38,7 +38,7 @@ PYTHONPATH=src python3 scripts/eval.py
 
 ## Privacy
 
-This is a **private repository**. It contains a personal development snapshot of
+This is a **public repository**. It contains a development snapshot of
 the project. The `.gitignore` excludes all real secrets (`.env_llm`, `.env_proxy`),
 local caches, and external review snapshots. Only example configs and synthetic
 eval data are committed.

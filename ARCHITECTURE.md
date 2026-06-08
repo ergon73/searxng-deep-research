@@ -1,12 +1,31 @@
 # Deep Research — Architecture
 
-**Version**: v0.7.3 (5 June 2026, after ChatGPT review)
-**Last updated**: 5 June 2026
-**Status**: Working, ~20-60% verification rate (depends heavily on query)
+**Version**: v0.8.0 (8 June 2026, after Phase 0 release hygiene)
+**Last updated**: 8 June 2026
+**Status**: Working, ~20-60% verification rate on offline eval (depends heavily on query)
 
-## Changelog v0.7.3 (5 June 2026)
+---
 
-Bugfixes after independent review (see `/opt/searxng/DR-05062026.txt`):
+## Changelog
+
+### v0.8.0 (8 June 2026) — Phase 0: release hygiene
+
+No research logic change. Repo hygiene + metric honesty only.
+
+| # | Change | File |
+|---|---|---|
+| 1 | README no longer references non-existent `src/claim_modeling.py` | `README.md` |
+| 2 | `pyproject.toml` `Source` URL fixed to real GitHub repo | `pyproject.toml` |
+| 3 | `pyproject.toml` version aligned to v0.8.0 | `pyproject.toml` |
+| 4 | `ARCHITECTURE.md`: removed v0.7.3 / "94% rate" / "94%→96%" claims — honest baseline only | `ARCHITECTURE.md` |
+| 5 | `scripts/{e2e_falcon9,e2e_smoke_llm,eval}.py`: portable `sys.path` via `Path(__file__).resolve().parents[1] / "src"` | `scripts/*.py` |
+| 6 | `config/docker-compose.yml`: default volume `./searxng/settings.yml` → `./settings.yml` (matches actual file location) | `config/docker-compose.yml` |
+| 7 | New `config/.env.example` with `SEARXNG_SECRET` + `SEARXNG_SETTINGS_PATH` (for Compose interpolation) | `config/.env.example` |
+| 8 | `scripts/eval.py`: Quality Score no longer penalises `needs_confirmation=True` (confirmation is a safety gate, not a quality defect) | `scripts/eval.py` |
+
+### v0.7.3 (5 June 2026) — bugfixes after independent review (historical)
+
+Review snapshot: `DR-05062026.txt` (in `.gitignore`, kept locally — not in repo).
 
 | # | Bug | Fix | File |
 |---|---|---|---|
@@ -19,6 +38,8 @@ Bugfixes after independent review (see `/opt/searxng/DR-05062026.txt`):
 | 7 | `time_range` в `deep_research` не пробрасывался в `verify_sources` | Passed through | `hermes_deepresearch.py` |
 | 8 | `infer_time_range()` отсутствовал | Added with 30+ RU/EN keywords | `hermes_deepresearch.py` |
 | 9 | Документация врала про "94% rate" | Updated baseline to **honest** metrics | `ARCHITECTURE.md`, `projects.md` |
+
+---
 
 ## 1. High-level data flow
 
@@ -56,6 +77,8 @@ User query (RU/EN)
 {verified_facts, total_facts, verification_rate, sources[], supporting_sources, refuting_sources}
 ```
 
+---
+
 ## 2. Components
 
 | Component | File | Purpose | Notes |
@@ -67,6 +90,13 @@ User query (RU/EN)
 | `deep_research()` | `hermes_deepresearch.py` | multi-query + dedup + verify | **Main entry point** |
 | `verify_sources()` | `hermes_deepresearch.py` | 4-level verification | **Conditional LLM-verify** when rate < 70% |
 | `LLMVerifier` | `llm_verifier.py` | OpenRouter client | `meta-llama/llama-3.1-8b-instruct:free` |
+| `adapt_query()` | `query_adaptation.py` | Query plan + confirmation gate | Returns adapted plan, not raw query |
+| `classify_intent()` | `routing.py` | Advisory intent classification | Returns route, engines, time_range, variants |
+| `evidence.py` | `evidence.py` | Span-level evidence windows around claims | For future claim→citation binding |
+| `synthesis.py` | `synthesis.py` | Deterministic Markdown answer with citations | LLM enrichment optional + validated |
+| `critical_review.py` | `critical_review.py` | Pure stdlib critic: numeric, entity, contradiction, temporal | No LLM, no network |
+
+---
 
 ## 3. Data model
 
@@ -107,6 +137,8 @@ deep_research(query, time_range=None, top_n=5) -> {
 }
 ```
 
+---
+
 ## 4. Decision log (10 ключевых решений)
 
 | # | Decision | Why | What was rejected |
@@ -120,9 +152,11 @@ deep_research(query, time_range=None, top_n=5) -> {
 | 7 | **LLM-conditional (rate < 70%)** | На 79% кейсов LLM не нужен → экономим 4-5s | LLM-always (дорого) |
 | 8 | **Batch prompt (N facts → 1 LLM call)** | Per-fact = 3s × 5 = 15s; batch = 2.3s total | Single-fact calls |
 | 9 | **OpenRouter + Llama 3.1 8B free** | Free, JSON mode ✅, 600ms latency | Mistral 7B (no JSON), GPT-4o (paid) |
-| 10 | **`time_range` bug — fix pending v0.8** | Сейчас параметр принимается, но игнорируется в `verify_sources` | — |
+| 10 | **`time_range` propagation to `verify_sources`** | `time_range` теперь пробрасывается (v0.7.3 bug fix) | — |
 
-## 5. Metrics baseline (v0.7.3 — HONEST)
+---
+
+## 5. Metrics baseline (v0.8.0 — HONEST, offline eval)
 
 ### 4 regression test cases (auto time_range enabled)
 
@@ -134,9 +168,12 @@ deep_research(query, time_range=None, top_n=5) -> {
 | `погода Москва сегодня` | RU news | 3/10 | 30% | 0.83 | 7.8s | `day` |
 | **Average** | | **7/35** | **20%** | **0.80** | **10.6s** | — |
 
+> **Note**: this is the same 20% average that v0.7.3 reported. v0.8.0 does not change research logic — it only changes repo hygiene. Do not expect new metrics from this release.
+
 ### Honest assessment
 
-**Average rate ~20% is much lower than the "94%" previously claimed in this doc.**
+**Average rate ~20% is the honest baseline for the current pipeline.** We do not claim any higher number.
+
 Reasons:
 - **Top-1 is often irrelevant** for broad queries (e.g. "погода" returns "афиша")
 - **Source overlap is low** for news: 2-3 sources may give different framings
@@ -161,62 +198,84 @@ For dev/EN queries the system is **useful**. For news/RU it needs more work.
 - Cost: $0 (Llama 3.1 8B free tier)
 - SearXNG: $0 (local)
 
-## 6. v0.8 plan (small, high-ROI improvements)
+---
 
-| Step | What | Estimated effect | Time |
-|---|---|---|---|
-| 1 | Fix `time_range` in `verify_sources` (currently silently dropped) | Bug fix, no metric change | 15 min |
-| 2 | Negation detection (regex: `(не\|нет\|без)\s+(fact)`) | +2-3% rate, +50ms | 30 min |
-| 3 | Auto time_range inference (10 keywords RU+EN) | Better top-1 for fresh queries | 1 hour |
+## 6. v0.9 plan (deferred, not committed)
 
-**Expected v0.8**: 94% → ~96% rate, **dramatic UX boost** (auto time_range).
+These are real opportunities, but no implementation timeline yet. See `ISSUES.md` for the open issue tracker.
 
-## 7. Phase 4-5 (not planned for v0.8)
+- **Phase 1: Typed `ResearchState`** — replace dict-soup with dataclasses. Foundation for runner.
+- **Phase 2: Planner + confirmation-aware `ResearchPlan`** — `planner.py` that uses `adapt_query()` + `classify_intent()`.
+- **Phase 3: `research_runner.py` (no LangGraph)** — `deep_research_v2()` orchestrator. Strangler refactor of `deep_research()`.
+- **Phase 4: Span-level citations** — bind `Claim → EvidenceWindow[] → inline citation [N]`. Invariant tests.
+- **Phase 5: Gap analysis + iterative deepening** — 1-2 extra search passes when verification is shallow.
+- **Phase 6: LangGraph adapter (optional)** — only if we need checkpointing / human-in-the-loop / fault tolerance.
 
-- **Phase 4: LLM synthesis** — TL;DR → facts → sources с inline citations. Не улучшает rate, **улучшает readability** для LLM-агента
-- **Phase 5: Temporal reasoning** — улучшенный time_range (force по смыслу: "сейчас" → day, "в 2020" → year). Частично покрыто в v0.8 step 3
+**Explicitly NOT planned:**
+- Tavily / Exa / Firecrawl provider interface (premature — 1 provider, no need to abstract)
+- Vector DB / Graph DB (premature — no claim/evidence model yet)
+- Multi-agent roles in separate processes (premature — keep functions in one process)
 
-## 8. Cmd map (для частых операций)
+---
+
+## 7. Cmd map (для частых операций)
 
 ```bash
 # Run research
-python3 -c "import sys; sys.path.insert(0,'/opt/searxng'); from hermes_deepresearch import deep_research; print(deep_research('БПЛА Москва'))"
+PYTHONPATH=src python3 -c "from hermes_deepresearch import deep_research; print(deep_research('БПЛА Москва'))"
 
 # A/B test SearXNG config (skill: searxng-ab-testing)
 hermes skill run searxng-ab-testing
 
 # Restart SearXNG
-cd /opt/searxng && docker compose restart searxng
+cd config && docker compose restart searxng
 
 # Check logs
 docker logs --tail 50 searxng
 
 # Test LLM verifier
-python3 -c "import sys; sys.path.insert(0,'/opt/searxng'); from llm_verifier import LLMVerifier; v=LLMVerifier(); print(v.verify_fact('123 дрона', '123 дрона сбито', 'сбито 123 дронов'))"
+PYTHONPATH=src python3 -c "from llm_verifier import LLMVerifier; v=LLMVerifier(); print(v.verify_fact('123 дрона', '123 дрона сбито', 'сбито 123 дронов'))"
 
 # Update SearXNG image
-cd /opt/searxng && docker compose pull && docker compose up -d
+cd config && docker compose pull && docker compose up -d
+
+# Tests (offline, no LLM)
+PYTHONPATH=src python3 -m pytest
+
+# End-to-end smoke (~2s)
+PYTHONPATH=src python3 scripts/e2e_falcon9.py
+
+# Eval run (offline)
+PYTHONPATH=src python3 scripts/eval.py
 ```
 
-## 9. Changelog
+---
 
-| Version | Date | Change | Rate impact |
+## 8. Changelog (historical)
+
+| Version | Date | Change | Verified rate |
 |---|---|---|---|
 | v0.1 | 2026-06-05 | SearXNG + `web_search()` | — |
 | v0.2 | 2026-06-05 | + `news_search()` | — |
 | v0.3 | 2026-06-05 | + `deep_search()` (fetch + confidence) | — |
-| v0.4 | 2026-06-05 | + `deep_research()` (multi-query) | baseline 79% |
-| v0.5 | 2026-06-05 | + verification (fuzzy + synonym) | 79% → 86% |
-| v0.6 | 2026-06-05 | + `LLMVerifier` (OpenRouter, free) | 86% → 91% |
-| v0.7 | 2026-06-05 | + batch prompt + conditional integration | 91% → **94%** |
-| v0.8 | planned | time_range fix + negation + auto inference | 94% → ~96% |
+| v0.4 | 2026-06-05 | + `deep_research()` (multi-query) | baseline 79% *(pre-honest-benchmark — discarded)* |
+| v0.5 | 2026-06-05 | + verification (fuzzy + synonym) | 79% → 86% *(pre-honest-benchmark — discarded)* |
+| v0.6 | 2026-06-05 | + `LLMVerifier` (OpenRouter, free) | 86% → 91% *(pre-honest-benchmark — discarded)* |
+| v0.7 | 2026-06-05 | + batch prompt + conditional integration | 91% → 94% *(pre-honest-benchmark — discarded)* |
+| v0.7.3 | 2026-06-05 | Bugfixes (see changelog above) | honest baseline ~20% |
+| v0.8.0 | 2026-06-08 | Phase 0 release hygiene (this release) | no metric change |
 
-## 10. Known limitations (won't be fixed)
+> v0.4–v0.7 numbers (79%→94%) were measured on a small biased sample and discarded
+> in favour of the honest baseline. Do not quote them externally.
+
+---
+
+## 9. Known limitations (won't be fixed in v0.8.x)
 
 | Limitation | Why | Workaround |
 |---|---|---|
 | Adversarial: top-1 and 2-3 others all wrong the same way | System verifies top-1 vs others, can confirm shared error | Manual fact-check on critical claims |
 | LLM false negatives on "too generic" facts ("Аэропорт Внуково") | LLM struggles with broad matches | Human review on flagged unverified |
 | Residential proxy may exit | Upstream pool exhaustion | Per-engine proxy (not global) so others still work |
-| `time_range` not propagated to verification in v0.7 | Bug in `verify_sources` signature | v0.8 step 1 |
-| Reformulation is 6-word placeholder | Cheap but ineffective | v0.9: LLM-based reformulation |
+| Reformulation is 6-word placeholder | Cheap but ineffective | v0.9+ candidate: LLM-based reformulation |
+| `deep_research()` uses legacy entrypoint, not the new typed pipeline | Strangler refactor needed | Phase 1-3 of v0.9 plan |

@@ -248,7 +248,7 @@ to implement them and they are not blocking v0.8.x.
 | Topic | Status | Notes |
 |---|---|---|
 | **#016** — `PARTIAL→DONE 2026-06-08` Typed `ResearchState` | ✅ PARTIAL DONE | Implemented: `SearchTask`, `Claim`, `ResearchState` (mutable container), reuse `EvidenceWindow` from `evidence.py`. **NOT done**: `SearchHit`, `Document`, `ClaimVerdict`, `ResearchPlan`, `ResearchReport` (5 deferred — no consumer yet, dicts are fine at this scale). Tests: `tests/test_models.py` (15 cases, all pass). |
-| **#017** — `DEFERRED` `planner.py::build_research_plan()` | backlog | Uses `adapt_query()` + `classify_intent()` |
+| **#017** — `PARTIAL→DONE 2026-06-08` `planner.py::build_research_plan()` | ✅ DONE | Composes `adapt_query()` (main+alts) + `classify_intent()` (variants) into typed `SearchTask` list (priorities 100/80/70/40). Falsification tasks (priority 40) added only for `news`/`security`/`product`/`technical` routes. Confirmation gate: True if EITHER `adapted.needs_confirmation` OR `intent.routing_warning`. Pure function — no network, no LLM, no fetch. Tests: `tests/test_planner.py` (27 cases, all pass). |
 | **#018** — `DEFERRED` `research_runner.py::deep_research_v2()` | backlog | Strangler refactor of legacy `deep_research()` |
 | **#019** — `DEFERRED` Span-level citations (Claim→EvidenceWindow→[N]) | backlog | Phase 4 of external plan |
 | **#020** — `DEFERRED` `gap_analysis.py` + iterative deepening (1-2 iter) | backlog | Phase 5 |

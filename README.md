@@ -10,6 +10,7 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 - `src/hermes_deepresearch.py::deep_research()` — entry point
 - `src/evidence.py`, `src/routing.py`, `src/synthesis.py`, `src/critical_review.py`, `src/llm_verifier.py` — pipeline stages
 - `src/models.py` — typed state skeleton (Phase 1, v0.8.0: `SearchTask`, `Claim`, `EvidenceWindow`, `ResearchState`)
+- `src/planner.py` — research plan builder (Phase 2, v0.8.0: `build_research_plan()` composes `adapt_query()` + `classify_intent()` into typed `SearchTask`s with falsification for news/security/product/technical)
 - `src/redact.py` — secret redaction (mandatory before archive/chat)
 - `src/hermes_searxng.py` — SearXNG JSON helper
 - `scripts/e2e_falcon9.py` — 8-stage end-to-end smoke (~2s)

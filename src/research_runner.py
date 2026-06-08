@@ -136,6 +136,23 @@ def _dispatch_search_task(task: SearchTask, *, max_results: int = 5) -> list[dic
     return web_search(task.query, **kwargs)
 
 
+def _task_key(task: SearchTask) -> tuple:
+    """Stable identity for a SearchTask, used to dedup across iterations.
+
+    Two tasks are "the same" iff they target the same query+route+language
+    with the same engine/category constraints. The priority and rationale
+    are deliberately excluded — a gap-fill task with the same intent but
+    a different priority should still dedup against the original.
+    """
+    return (
+        task.query,
+        task.route,
+        task.language,
+        task.engines,
+        task.categories,
+    )
+
+
 def _fetch_documents(
     urls: list[str], *, max_chars: int = MAX_CONTENT_CHARS
 ) -> list[dict]:
@@ -373,13 +390,37 @@ def run_research(
     # Iterative deepening loop: after each pass, run gap analysis. If gaps
     # are detected and we have iterations left, add gap-fill tasks and
     # re-run. If no gaps (or max_iterations reached), finalise.
+    #
+    # v0.8.1 Phase B hardening:
+    #   - We do NOT mutate plan.search_tasks. The plan is treated as
+    #     immutable. Gap-fill tasks live in a local `pending_tasks` queue.
+    #   - We dedup tasks and URLs across iterations so we never re-search
+    #     or re-fetch the same work. v0.8.0 had a bug where iteration 2
+    #     re-ran every original task, doubling the SearXNG load.
     try:
+        # The pending queue: starts with all plan tasks, then accumulates
+        # gap-fill tasks across iterations. Each iteration dispatches
+        # `current_tasks` (a snapshot of the queue) and then resets the
+        # queue to receive the next round of gap-fill tasks.
+        pending_tasks: list[SearchTask] = list(plan.search_tasks)
+        seen_task_keys: set[tuple] = {
+            _task_key(t) for t in plan.search_tasks
+        }
+        seen_urls: set[str] = set()
+
         for iteration in range(max_iterations):
             state.iterations = iteration + 1
 
-            # 4a. Search + fetch for each task
+            # Snapshot what to dispatch this iteration. After dispatch,
+            # `pending_tasks` will be repopulated with the NEXT round
+            # of gap-fill tasks (which we'll only run if there's a
+            # next iteration).
+            current_tasks = pending_tasks
+            pending_tasks = []
+
+            # 4a. Search + fetch for each (new) task only
             iteration_hits: list[dict] = []
-            for task in plan.search_tasks:
+            for task in current_tasks:
                 hits = _dispatch_search_task(task, max_results=top_n * 2)
                 for h in hits:
                     h["_task_priority"] = task.priority
@@ -388,14 +429,22 @@ def run_research(
 
             all_hits.extend(iteration_hits)
             deduped_hits = _dedup_hits_by_canonical(iteration_hits)
-            top_urls = [h["url"] for h in deduped_hits[:top_n]]
+            # Cross-iteration URL dedup: only fetch URLs we haven't seen.
+            new_urls: list[str] = []
+            for h in deduped_hits:
+                u = h.get("url", "")
+                if u and u not in seen_urls:
+                    seen_urls.add(u)
+                    new_urls.append(u)
+                if len(new_urls) >= top_n:
+                    break
 
-            if not top_urls:
-                # Nothing to fetch; record the gap and break the loop.
+            if not new_urls:
+                # Nothing new to fetch; record the gap and break the loop.
                 state.gaps.append("no_search_results")
                 break
 
-            iter_documents = _fetch_documents(top_urls)
+            iter_documents = _fetch_documents(new_urls)
             documents.extend(iter_documents)
 
             # 4b. Extract claims from documents
@@ -440,10 +489,10 @@ def run_research(
             for g in gaps:
                 state.gaps.append(f"{g.kind}: {g.detail}")
 
-            # 4e. If we have iterations left AND gaps exist, add gap-fill
-            #     tasks and let the loop continue. If no gaps, we can
-            #     early-exit even with iterations remaining (nothing to
-            #     improve).
+            # 4e. If we have iterations left AND gaps exist, queue
+            #     gap-fill tasks for the NEXT iteration. Dedup against
+            #     `seen_task_keys` so we never re-run a task we already
+            #     dispatched. Plan is NOT mutated.
             if iteration + 1 < max_iterations and gaps:
                 new_tasks = gaps_to_search_tasks(
                     gaps,
@@ -451,7 +500,11 @@ def run_research(
                     route=plan.intent.route,
                     language=plan.adapted.get("language", "en"),
                 )
-                plan.search_tasks.extend(new_tasks)
+                for nt in new_tasks:
+                    key = _task_key(nt)
+                    if key not in seen_task_keys:
+                        seen_task_keys.add(key)
+                        pending_tasks.append(nt)
             # else: no more iterations OR no gaps → loop ends naturally
     except Exception as e:
         return ResearchResult(
@@ -510,6 +563,17 @@ def run_research(
             synth.coverage = {}
         synth.coverage["verification_aggregate_count"] = len(state.verdicts)
         synth.coverage["verification_fact_count"] = len(fact_results)
+        # v0.8.1 Phase B — audit trail for iterative deepening.
+        # `seen_task_keys` may not be defined if the loop never entered
+        # (e.g. confirmation gate tripped). Use `get` with default.
+        try:
+            synth.coverage["iterations_executed"] = state.iterations
+            synth.coverage["unique_tasks_dispatched"] = len(seen_task_keys)
+            synth.coverage["unique_urls_fetched"] = len(seen_urls)
+        except NameError:
+            # Loop never ran (confirmation gate tripped); leave coverage
+            # without the audit fields.
+            pass
 
         if state.claims:
             stats = citation_stats(state.claims)

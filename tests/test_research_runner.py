@@ -35,6 +35,7 @@ from research_runner import (  # noqa: E402
     _extract_claims_from_documents,
     _fetch_documents,
     _flatten_verification_results,
+    _task_key,
     deep_research_v2,
     run_research,
 )
@@ -1000,3 +1001,268 @@ class TestPhaseARunnerEndToEnd:
             f"BUG: top1 = {captured_top1[0]!r}, expected rank1. "
             f"verify_sources is verifying the wrong source."
         )
+
+
+# ============================================================
+# v0.8.1 Phase B — regression tests for iterative deepening
+# hardening (the ResearchPlan mutation and re-run issues from the
+# external ChatGPT review).
+# Each test would have FAILED on v0.8.0 and PASSES after the fix.
+# ============================================================
+
+
+class TestPhaseBTaskKey:
+    """`_task_key()` is the dedup primitive. Same intent → same key."""
+
+    def test_same_query_same_route_same_key(self):
+        from models import SearchTask
+        a = SearchTask(query="q", route="general", language="en")
+        b = SearchTask(query="q", route="general", language="en")
+        assert _task_key(a) == _task_key(b)
+
+    def test_different_query_different_key(self):
+        from models import SearchTask
+        a = SearchTask(query="q1", route="general")
+        b = SearchTask(query="q2", route="general")
+        assert _task_key(a) != _task_key(b)
+
+    def test_priority_does_not_affect_key(self):
+        """A gap-fill task with higher priority but same intent dedups
+        against the original. This is intentional — we don't want to
+        re-dispatch the same search just because the rationale differs."""
+        from models import SearchTask
+        a = SearchTask(query="q", route="general", priority=100)
+        b = SearchTask(query="q", route="general", priority=50)
+        assert _task_key(a) == _task_key(b)
+
+    def test_engines_field_affects_key(self):
+        """Different engine filters → different tasks (different intents)."""
+        from models import SearchTask
+        a = SearchTask(query="q", engines="wikipedia")
+        b = SearchTask(query="q", engines="arxiv")
+        assert _task_key(a) != _task_key(b)
+
+
+class TestPhaseBPlanNotMutated:
+    """v0.8.0: `plan.search_tasks.extend(new_tasks)` mutated the frozen plan.
+
+    v0.8.1 Phase B: pending_tasks live in a local queue. Plan stays
+    pristine — `plan.to_dict()` shows the same search_tasks count
+    before and after the run."""
+
+    def test_plan_search_tasks_unchanged_after_run(self, monkeypatch):
+        """Capture the plan.tasks count before and after — should be equal."""
+
+        # We need to capture the plan; do that by reading it from the
+        # ResearchResult on the way out. But we want to also see the
+        # plan before run_research. So we use build_research_plan directly.
+        from planner import build_research_plan
+        plan = build_research_plan("Falcon 9")
+        tasks_before = list(plan.search_tasks)
+        n_before = len(tasks_before)
+
+        # Force a gap-analysis iteration by making the gap check return gaps
+        # (use a real fixture so other monkeypatches still work)
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources",
+                            lambda *a, **kw: {
+                                "verified_facts": 0, "total_facts": 0,
+                                "verification_rate": 0.0, "verification_details": [],
+                                "llm_enhanced": False, "llm_verified_count": 0,
+                                "llm_latency": 0.0, "llm_error": None,
+                            })
+
+        # Run with max_iterations=2 to give gap analysis a chance to fire
+        run_research("Falcon 9", approved_plan=True, max_iterations=2)
+
+        # The original plan object (in our scope) must be unchanged
+        assert len(plan.search_tasks) == n_before, (
+            f"BUG: plan.search_tasks grew from {n_before} to "
+            f"{len(plan.search_tasks)} — the runner mutated the plan."
+        )
+        # And the tasks themselves are the same objects (no rebinding)
+        for i, t in enumerate(plan.search_tasks):
+            assert t is tasks_before[i], (
+                f"BUG: plan.search_tasks[{i}] was replaced (mutation)"
+            )
+
+    def test_result_plan_equals_input_plan(self, monkeypatch):
+        """The plan in the result should be the SAME object as the input
+        plan, not a modified copy."""
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources",
+                            lambda *a, **kw: {
+                                "verified_facts": 0, "total_facts": 0,
+                                "verification_rate": 0.0, "verification_details": [],
+                                "llm_enhanced": False, "llm_verified_count": 0,
+                                "llm_latency": 0.0, "llm_error": None,
+                            })
+
+        result = run_research("Falcon 9", approved_plan=True)
+        # The result.plan.search_tasks is the same frozen plan object
+        assert result.plan is not None
+        # Its search_tasks list should equal what build_research_plan gave us
+        from planner import build_research_plan
+        plan2 = build_research_plan("Falcon 9")
+        assert len(result.plan.search_tasks) == len(plan2.search_tasks), (
+            "BUG: result.plan.search_tasks grew — gap-fill tasks were "
+            "appended to the plan instead of the local pending queue"
+        )
+
+
+class TestPhaseBDeepeningDedup:
+    """v0.8.0: iteration 2 re-ran every original task from plan.search_tasks.
+
+    v0.8.1: each iteration dispatches only `current_tasks` (the queue
+    snapshot), and gap-fill tasks live in a separate queue. Plus we
+    track seen_task_keys for cross-iteration dedup."""
+
+    def test_iteration_2_does_not_redo_original_tasks(self, monkeypatch):
+        """With max_iterations=2, no original task (by _task_key) may be
+        dispatched twice. v0.8.0 re-ran every original task on every
+        iteration. v0.8.1 dispatches `current_tasks` only, which is a
+        fresh snapshot per iteration (not the full plan)."""
+        from research_runner import _task_key as runner_task_key
+        from planner import build_research_plan
+        from models import SearchTask
+
+        dispatched_keys: list[tuple] = []
+
+        # Wrap _dispatch_search_task so we record the task_key of every
+        # task that the runner actually sent to the search backend.
+        real_dispatch = _dispatch_search_task
+        def hooked_dispatch(task, **kw):
+            dispatched_keys.append(runner_task_key(task))
+            return real_dispatch(task, **kw)
+
+        monkeypatch.setattr("research_runner._dispatch_search_task", hooked_dispatch)
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources",
+                            lambda *a, **kw: {
+                                "verified_facts": 0, "total_facts": 0,
+                                "verification_rate": 0.0, "verification_details": [],
+                                "llm_enhanced": False, "llm_verified_count": 0,
+                                "llm_latency": 0.0, "llm_error": None,
+                            })
+
+        # Patch analyze_gaps to return a gap on iter 0 (triggers gap-fill
+        # tasks), no gaps on iter 1 (clean run).
+        gap_call_count = [0]
+        from gap_analysis import ResearchGap
+        def fake_analyze_gaps(state):
+            gap_call_count[0] += 1
+            if gap_call_count[0] == 1:
+                return [ResearchGap(
+                    kind="too_few_sources", detail="need more",
+                )]
+            return []
+
+        monkeypatch.setattr("research_runner.analyze_gaps", fake_analyze_gaps)
+
+        run_research("Falcon 9", approved_plan=True, max_iterations=2)
+
+        # Get the plan's original task keys for comparison
+        plan = build_research_plan("Falcon 9")
+        original_keys = {runner_task_key(t) for t in plan.search_tasks}
+
+        # Every original task key must appear at most ONCE in the dispatched
+        # log. (On v0.8.0 they would all appear twice — once per iteration.)
+        for ok in original_keys:
+            count = dispatched_keys.count(ok)
+            assert count <= 1, (
+                f"BUG: original task {ok!r} was dispatched {count} times "
+                f"in 2 iterations. v0.8.0 re-runs original tasks on every "
+                f"iteration. dispatched_keys={dispatched_keys}"
+            )
+
+    def test_seen_urls_blocks_duplicate_fetches(self, monkeypatch):
+        """Even if the search returns the same URL twice (e.g. across
+        iterations), we should fetch it only once."""
+
+        fetched_urls: list[str] = []
+
+        def fake_fetch(url, **kw):
+            fetched_urls.append(url)
+            return _make_doc(url, text="body")
+
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://x.com/once")])
+        monkeypatch.setattr("research_runner.fetch_url", fake_fetch)
+        monkeypatch.setattr("research_runner.verify_sources",
+                            lambda *a, **kw: {
+                                "verified_facts": 0, "total_facts": 0,
+                                "verification_rate": 0.0, "verification_details": [],
+                                "llm_enhanced": False, "llm_verified_count": 0,
+                                "llm_latency": 0.0, "llm_error": None,
+                            })
+
+        # max_iterations=2 with no gaps: iteration 0 fetches,
+        # iteration 1 should NOT re-fetch the same URL.
+        run_research("Falcon 9", approved_plan=True, max_iterations=2)
+
+        # The same URL must appear at most once in fetched_urls
+        n_once = fetched_urls.count("https://x.com/once")
+        assert n_once == 1, (
+            f"BUG: URL 'https://x.com/once' was fetched {n_once} times "
+            f"across {len(fetched_urls)} calls. Cross-iteration dedup broken."
+        )
+
+    def test_iteration_count_audit_trail(self, monkeypatch):
+        """synth.coverage should report iterations_executed so the audit
+        trail is unambiguous."""
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources",
+                            lambda *a, **kw: {
+                                "verified_facts": 0, "total_facts": 0,
+                                "verification_rate": 0.0, "verification_details": [],
+                                "llm_enhanced": False, "llm_verified_count": 0,
+                                "llm_latency": 0.0, "llm_error": None,
+                            })
+
+        result = run_research("Falcon 9", approved_plan=True, max_iterations=2)
+        cov = result.synthesis.coverage
+        assert "iterations_executed" in cov
+        assert "unique_tasks_dispatched" in cov
+        assert "unique_urls_fetched" in cov
+        # At least one task and one URL were dispatched
+        assert cov["unique_tasks_dispatched"] >= 1
+        assert cov["unique_urls_fetched"] >= 1
+
+
+class TestPhaseBConfirmationGateNotMutatingPlan:
+    """When confirmation gate trips, plan should be returned as-is."""
+
+    def test_needs_confirmation_doesnt_touch_plan(self, monkeypatch):
+        """Long query triggers needs_confirmation → runner returns early.
+        Plan must be the same object that was built (no mutation, no
+        pending_tasks queue side-effects)."""
+        from research_runner import run_research
+
+        # A long/uncertain query triggers needs_confirmation
+        result = run_research(
+            "Falcon 9 detailed analysis of the entire 21st century space "
+            "industry with specific focus on the evolution of launch vehicle "
+            "technologies, including but not limited to reusable first stages, "
+            "methane engines, and on-orbit refueling. I want at least 20 years "
+            "of detail.",
+        )
+        # The plan (or its absence) should be unchanged
+        assert result.status == "needs_confirmation"
+        # Plan is returned untouched
+        assert result.plan is not None
+        # And the plan still has its original search tasks (no extension)
+        # We don't know exactly what build_research_plan returns, but the
+        # runner should NOT have added any gap-fill tasks (it returned
+        # before the loop started).

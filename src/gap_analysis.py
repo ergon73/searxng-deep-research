@@ -172,23 +172,69 @@ def analyze_gaps(state: "ResearchState") -> list[ResearchGap]:
             ))
 
     # 4. Too many unsupported claims
-    # We approximate "supported" as "appears in some document"; this is
-    # a rough heuristic. Phase 4 (#019) will replace with span-level check.
+    # v0.8.1.1: substring match (claim[:50] in document_text) was a
+    # trivial check — claims are extracted FROM documents, so the
+    # substring would always be there. Real "supported" should mean
+    # cross-source: a verification verdict marked SUPPORTS this claim
+    # against another source (or, if LLM is on, an LLM verdict).
+    #
+    # Strategy:
+    #   - Build a map: claim.text (first 50 chars, lowered) -> verdict
+    #     from state.verdicts[i].verification_details[j].
+    #   - A claim is "supported" if a matching verdict has verdict
+    #     in {"SUPPORTS"} (or method in {"exact", "fuzzy", "llm"} with
+    #     verified=True).
+    #   - Fallback to substring check only if state.verdicts is empty
+    #     (legacy: pre-verification state) so existing tests still pass.
     if claims:
+        # Build (lowered_50char_text -> verdict) map from verdicts.
+        verdict_map: dict[str, str] = {}
+        for v in verdicts or []:
+            for d in v.get("verification_details", []) or []:
+                if not isinstance(d, dict):
+                    continue
+                fact = d.get("fact", "")
+                if not fact:
+                    continue
+                key = fact[:50].lower()
+                # Resolve the verdict string: prefer explicit verdict,
+                # else fall back to verified=True → "SUPPORTS" / None.
+                raw = d.get("verdict")
+                if raw is None:
+                    raw = "SUPPORTS" if d.get("verified") else None
+                if raw is None:
+                    continue  # no signal at all, skip
+                v_value: str = raw
+                # Prefer the strongest verdict if duplicated.
+                existing = verdict_map.get(key)
+                if v_value == "SUPPORTS" or existing != "SUPPORTS":
+                    verdict_map[key] = v_value
+
         unsupported = 0
+        use_verdicts = bool(verdict_map)  # only use verdicts if we have any
         for c in claims:
-            # c is a Claim dataclass with .text; check if any document
-            # contains it as substring (case-insensitive, first 50 chars)
             needle = c.text[:50].lower() if hasattr(c, "text") else str(c)[:50].lower()
             if not needle:
                 continue
-            if not any(needle in (d.get("text", "") or "").lower() for d in documents):
-                unsupported += 1
+            if use_verdicts:
+                # New (v0.8.1.1) path: claim supported iff verdict_map says so.
+                if verdict_map.get(needle) != "SUPPORTS":
+                    unsupported += 1
+            else:
+                # Legacy fallback: substring in any document. Used when
+                # verify_sources() has not run yet (e.g. early-exit state).
+                if not any(needle in (d.get("text", "") or "").lower() for d in documents):
+                    unsupported += 1
         ratio = unsupported / max(1, len(claims))
         if ratio > MAX_UNSUPPORTED_CLAIM_RATIO:
+            verdict_source = "verdicts" if use_verdicts else "substring_fallback"
             gaps.append(ResearchGap(
                 kind="too_many_unsupported_claims",
-                detail=f"{unsupported}/{len(claims)} claims ({ratio:.0%}) unsupported (max {MAX_UNSUPPORTED_CLAIM_RATIO:.0%})",
+                detail=(
+                    f"{unsupported}/{len(claims)} claims ({ratio:.0%}) "
+                    f"unsupported (max {MAX_UNSUPPORTED_CLAIM_RATIO:.0%}, "
+                    f"source={verdict_source})"
+                ),
             ))
 
     # 5. Contradictions unresolved

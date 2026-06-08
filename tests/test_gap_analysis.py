@@ -536,3 +536,164 @@ class TestGapAnalysisNoNetwork:
         # Must complete without raising
         gaps = analyze_gaps(state)
         assert isinstance(gaps, list)
+
+
+# ========================================================================
+# v0.8.1.1 hardening: tests for the new verdict-based "unsupported claims"
+# check. Replaces the v0.8.0 substring check (claim[:50] in document text),
+# which was a trivial pass because claims are extracted FROM documents.
+#
+# New rule: a claim is "supported" iff a matching verdict in
+# state.verdicts[].verification_details[] has verdict == "SUPPORTS".
+# Fallback to substring only when state.verdicts is empty.
+# ========================================================================
+
+
+def _claim_v(text: str):
+    """Helper: build a minimal Claim with just .text and .is_stub."""
+    from models import Claim
+    return Claim(text=text)
+
+
+def _doc_v(url: str, text: str = "doc text"):
+    return {"url": url, "text": text, "title": "t", "score": 0.0}
+
+
+def _verdict_with_facts(facts_with_verdicts: list[tuple[str, str, bool]]) -> dict:
+    """Build an aggregate verdict with the given (fact, verdict, verified) tuples."""
+    details = [
+        {"fact": fact, "verdict": verdict, "verified": verified, "method": "llm"}
+        for fact, verdict, verified in facts_with_verdicts
+    ]
+    return {
+        "verified_facts": sum(1 for d in details if d["verified"]),
+        "total_facts": len(details),
+        "verification_rate": 0.0,
+        "verification_details": details,
+    }
+
+
+class TestUnsupportedClaimsVerdictBased:
+    """New (v0.8.1.1) verdict-based check for too_many_unsupported_claims."""
+
+    def test_all_claims_supported_by_verdicts(self):
+        """When every claim has a SUPPORTS verdict, no unsupported gap."""
+        state = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1")],
+            claims=[_claim_v("Apple was founded in 1976")],
+            verdicts=[_verdict_with_facts([("Apple was founded in 1976", "SUPPORTS", True)])],
+        )
+        gaps = analyze_gaps(state)
+        unsupported = [g for g in gaps if g.kind == "too_many_unsupported_claims"]
+        assert not unsupported, (
+            f"expected no unsupported gap when all verdicts SUPPORTS, got {unsupported}"
+        )
+
+    def test_refutes_verdict_counts_as_unsupported(self):
+        """REFUTES verdict is NOT 'supported' → triggers gap."""
+        # 1 of 1 claims (100%) unsupported > 40% threshold.
+        state = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1")],
+            claims=[_claim_v("Apple was founded in 1976")],
+            verdicts=[_verdict_with_facts([("Apple was founded in 1976", "REFUTES", False)])],
+        )
+        gaps = analyze_gaps(state)
+        unsupported = [g for g in gaps if g.kind == "too_many_unsupported_claims"]
+        assert len(unsupported) == 1
+        assert "source=verdicts" in unsupported[0].detail
+
+    def test_insufficient_verdict_counts_as_unsupported(self):
+        """INSUFFICIENT verdict is NOT 'supported' → triggers gap."""
+        state = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1")],
+            claims=[_claim_v("Some unclear claim here")],
+            verdicts=[_verdict_with_facts([("Some unclear claim here", "INSUFFICIENT", False)])],
+        )
+        gaps = analyze_gaps(state)
+        unsupported = [g for g in gaps if g.kind == "too_many_unsupported_claims"]
+        assert len(unsupported) == 1
+        assert "source=verdicts" in unsupported[0].detail
+
+    def test_partial_support_below_threshold_no_gap(self):
+        """3/4 supported = 25% unsupported, below 40% threshold → no gap."""
+        # We need at least 1 unsupported claim to test the ratio. Use
+        # 3 SUPPORTS + 1 REFUTES → 1/4 = 25% unsupported, below 40%.
+        state = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1")],
+            claims=[
+                _claim_v("Claim one supported"),
+                _claim_v("Claim two supported"),
+                _claim_v("Claim three supported"),
+                _claim_v("Claim four refuted"),
+            ],
+            verdicts=[_verdict_with_facts([
+                ("Claim one supported", "SUPPORTS", True),
+                ("Claim two supported", "SUPPORTS", True),
+                ("Claim three supported", "SUPPORTS", True),
+                ("Claim four refuted", "REFUTES", False),
+            ])],
+        )
+        gaps = analyze_gaps(state)
+        unsupported = [g for g in gaps if g.kind == "too_many_unsupported_claims"]
+        assert not unsupported, (
+            f"25% unsupported should be below 40% threshold, got {unsupported}"
+        )
+
+    def test_fallback_to_substring_when_no_verdicts(self):
+        """When state.verdicts is empty, fall back to substring (legacy)."""
+        # No verdicts at all. Substring check: claim text appears in
+        # document, so NOT unsupported → no gap.
+        state = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1", "Apple was founded in 1976")],
+            claims=[_claim_v("Apple was founded in 1976")],
+            verdicts=[],  # empty → fallback
+        )
+        gaps = analyze_gaps(state)
+        unsupported = [g for g in gaps if g.kind == "too_many_unsupported_claims"]
+        assert not unsupported
+        # And if we DO see a gap in this case, it should be marked as
+        # substring_fallback. Test that by creating a state where the
+        # substring check WOULD flag a claim as unsupported.
+        state2 = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1", "Some other content here")],
+            claims=[_claim_v("Apple was founded in 1976")],
+            verdicts=[],
+        )
+        gaps2 = analyze_gaps(state2)
+        unsupported2 = [g for g in gaps2 if g.kind == "too_many_unsupported_claims"]
+        assert len(unsupported2) == 1
+        assert "source=substring_fallback" in unsupported2[0].detail
+
+    def test_verified_true_without_verdict_field_counts_as_supports(self):
+        """Some verification_details have only `verified=True`, no `verdict`."""
+        # Use a manual verdict dict to mimic this shape.
+        state = ResearchState(
+            original_query="q",
+            documents=[_doc_v("https://a.com/1")],
+            claims=[_claim_v("Some fact here that is verified")],
+            verdicts=[{
+                "verified_facts": 1,
+                "total_facts": 1,
+                "verification_rate": 1.0,
+                "verification_details": [
+                    {
+                        "fact": "Some fact here that is verified",
+                        "verified": True,
+                        # NOTE: no "verdict" key — only "verified" flag.
+                        "method": "fuzzy",
+                    }
+                ],
+            }],
+        )
+        gaps = analyze_gaps(state)
+        unsupported = [g for g in gaps if g.kind == "too_many_unsupported_claims"]
+        assert not unsupported, (
+            f"verified=True without verdict should still count as supported, "
+            f"got {unsupported}"
+        )

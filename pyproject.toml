@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deep-research-project"
-version = "0.8.0"
-description = "Local SearXNG-based research fetcher with 4-level fact verification"
+name = "searxng-deep-research"
+version = "0.8.1"
+description = "Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

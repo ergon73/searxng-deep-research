@@ -2,12 +2,14 @@
 
 Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check.
 
-**Version:** v0.8 (5 June 2026)
-**Status:** working prototype, see `ISSUES.md` and `SECURITY.md` for current state.
+**Version:** v0.8.1 (8 June 2026)
+**Status:** hardening release. See `.hermes/plans/ISSUES.md` and `SECURITY.md` for current state.
+**Recommended entrypoint:** `src/research_runner.py::run_research()` / `deep_research_v2()`.
+**Legacy entrypoint:** `src/hermes_deepresearch.py::deep_research()` (untouched, still works).
 
 ## What this is
 
-- `src/hermes_deepresearch.py::deep_research()` — entry point
+- `src/hermes_deepresearch.py::deep_research()` — legacy entrypoint (strangler, not modified)
 - `src/evidence.py`, `src/routing.py`, `src/synthesis.py`, `src/critical_review.py`, `src/llm_verifier.py` — pipeline stages
 - `src/models.py` — typed state skeleton (Phase 1, v0.8.0: `SearchTask`, `Claim`, `EvidenceWindow`, `ResearchState`)
 - `src/planner.py` — research plan builder (Phase 2, v0.8.0: `build_research_plan()` composes `adapt_query()` + `classify_intent()` into typed `SearchTask`s with falsification for news/security/product/technical)
@@ -18,15 +20,18 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 - `src/hermes_searxng.py` — SearXNG JSON helper
 - `scripts/e2e_falcon9.py` — 8-stage end-to-end smoke (~2s)
 - `scripts/eval.py` + `data/eval_set.json` — synthetic eval set
-- `tests/` — 397 portable tests, run with `PYTHONPATH=src python3 -m pytest`
+- `tests/` — 586 portable tests, run with `PYTHONPATH=src python3 -m pytest`
 
 ## Read these first
 
 - `AGENTS.md` — project rules and security policy for any coding agent
 - `SECURITY.md` — threat model, hard rules, secret redaction policy
 - `ARCHITECTURE.md` — pipeline diagram and data flow
-- `ISSUES.md` — known gaps, open/closed issues, verification commands
+- `.hermes/plans/ISSUES.md` — known gaps, open/closed issues, verification commands (issue-ledger)
 - `INSTALL.md` — how to run the SearXNG + Valkey stack locally
+- `RELEASE_NOTES_v0.8.0.md` — v0.8.0 release notes
+- `docs/SELF_REVIEW_v0.8.0.md` — author's pre-review self-criticism
+- `docs/CHATGPT_REVIEW_REQUEST_v0.8.0.md` — external review prompt
 
 ## Quick start (for review)
 

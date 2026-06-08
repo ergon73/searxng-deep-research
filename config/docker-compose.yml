@@ -38,7 +38,12 @@ services:
       - SEARXNG_BIND_ADDRESS=0.0.0.0
       - SEARXNG_PORT=8080
     env_file:
-      - ./.env_llm
+      # NOTE (v0.8.1 Phase C): .env_llm is intentionally NOT passed here.
+      # The LLM_API_KEY and LLM_MODEL variables are only consumed by the
+      # Python verifier (src/llm_verifier.py) at runtime via os.environ.
+      # Passing them into the SearXNG container leaks the OpenRouter key
+      # to a process that doesn't need it. See INSTALL.md for the new
+      # config layout: config/.env for Docker, .env_llm for Python.
       - ./.env_proxy
     networks:
       - searxng-internal

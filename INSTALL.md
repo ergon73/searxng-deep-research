@@ -47,37 +47,48 @@ chmod 600 /opt/searxng/.env_proxy
 
 Если прокси нет — оставь файл пустым, движки будут идти напрямую (часть из них упрётся в CAPTCHA, но Bing/Google/Mojeek/Presearch всё равно работают).
 
-## Шаг 3a. .env_llm (API ключ + SEARXNG_SECRET + LLM_MODEL)
+## Шаг 3a. config/.env (SEARXNG_SECRET для Docker)
+
+```bash
+# Генерируем секрет
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# Записываем в config/.env (читается Docker Compose через интерполяцию)
+# Замени YOUR_GENERATED_SECRET на результат команды выше
+printf 'SEARXNG_SECRET=YOUR_GENERATED_SECRET\n' > config/.env
+chmod 600 config/.env
+```
+
+`config/.env` — это **только** для Docker Compose (через `${SEARXNG_SECRET:?...}`).
+Здесь НЕТ LLM-ключей — они живут в отдельном `.env_llm` (см. шаг 3b).
+
+⚠️ **Не** коммить `config/.env` в git. **Не** вставляй чужой секрет — сгенерируй свой.
+
+## Шаг 3b. .env_llm (API ключ для LLM-верификатора)
 
 ```bash
 # Скопируй пример и заполни реальные значения
-cp /opt/searxng/.env_llm.example /opt/searxng/.env_llm
-nano /opt/searxng/.env_llm
-chmod 600 /opt/searxng/.env_llm
+cp .env_llm.example .env_llm
+nano .env_llm
+chmod 600 .env_llm
 ```
 
-В `.env_llm` должно быть минимум три ключа:
+В `.env_llm` должно быть **только два** ключа (LLM_API_KEY + LLM_MODEL), потому что
+эти переменные читаются **только Python-кодом** верификатора
+(`src/llm_verifier.py`), **не** Docker-контейнером SearXNG:
 
 ```bash
 LLM_API_KEY=sk-or-v1-...   # OpenRouter API key (https://openrouter.ai/keys)
-LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free  # или платная модель для critical use
-SEARXNG_SECRET=...         # 64 hex chars; сгенерируй командой ниже
+LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free  # или платная модель
 ```
 
-Сгенерируй свой `SEARXNG_SECRET` (это будет 64-символьный hex):
+⚠️ **Не** коммить `.env_llm` в git. **Не** вставляй чужой секрет.
 
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-⚠️ **Не** коммить `.env_llm` в git. **Не** вставляй чужой секрет — сгенерируй свой.
-
-## Шаг 4. docker-compose.yml
+## Шаг 4. config/docker-compose.yml
 
 ```yaml
-# /opt/searxng/docker-compose.yml
-# Это reference-снимок; реальный файл собран с учётом .env_llm.
-# Полный текущий compose — в /opt/searxng/docker-compose.yml, см. git status.
+# /opt/searxng/config/docker-compose.yml
+# Реальный файл — в config/docker-compose.yml, см. git status.
 services:
   valkey:
     image: valkey/valkey:9-alpine
@@ -102,15 +113,18 @@ services:
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
-      # Host path overridable через SEARXNG_SETTINGS_PATH в .env_llm.
-      - ${SEARXNG_SETTINGS_PATH:-./searxng/settings.yml}:/etc/searxng/settings.yml:ro
+      # Host path overridable через SEARXNG_SETTINGS_PATH в config/.env.
+      # По умолчанию — ./settings.yml (рядом с docker-compose.yml).
+      - ${SEARXNG_SETTINGS_PATH:-./settings.yml}:/etc/searxng/settings.yml:ro
     environment:
-      # Fail-fast если SEARXNG_SECRET не задан в .env_llm.
-      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env_llm}
+      # Fail-fast если SEARXNG_SECRET не задан в config/.env.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in config/.env}
       - SEARXNG_BIND_ADDRESS=0.0.0.0
       - SEARXNG_PORT=8080
     env_file:
-      - ./.env_llm
+      # .env_llm намеренно НЕ передаётся — SearXNG-контейнеру не нужны
+      # LLM_API_KEY / LLM_MODEL. Они читаются Python-верификатором через
+      # os.environ на хосте, не через переменные окружения контейнера.
       - ./.env_proxy
     networks:
       - searxng-internal

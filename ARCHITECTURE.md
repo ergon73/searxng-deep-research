@@ -200,21 +200,40 @@ For dev/EN queries the system is **useful**. For news/RU it needs more work.
 
 ---
 
-## 6. v0.9 plan (deferred, not committed)
+## 6. v0.9+ plan (deferred, not committed)
 
-These are real opportunities, but no implementation timeline yet. See `ISSUES.md` for the open issue tracker.
+These are real opportunities, but no implementation timeline yet. See
+`.hermes/plans/ISSUES.md` for the open issue tracker.
 
-- **Phase 1: Typed `ResearchState`** — replace dict-soup with dataclasses. Foundation for runner.
-- **Phase 2: Planner + confirmation-aware `ResearchPlan`** — `planner.py` that uses `adapt_query()` + `classify_intent()`.
-- **Phase 3: `research_runner.py` (no LangGraph)** — `deep_research_v2()` orchestrator. Strangler refactor of `deep_research()`.
-- **Phase 4: Span-level citations** — bind `Claim → EvidenceWindow[] → inline citation [N]`. Invariant tests.
-- **Phase 5: Gap analysis + iterative deepening** — 1-2 extra search passes when verification is shallow.
-- **Phase 6: LangGraph adapter (optional)** — only if we need checkpointing / human-in-the-loop / fault tolerance.
+**Already shipped (v0.8.0 — was previously listed as v0.9 plan):**
+- ~~Phase 1: Typed `ResearchState`~~ → `src/models.py` ✅
+- ~~Phase 2: Planner + confirmation-aware `ResearchPlan`~~ → `src/planner.py` ✅
+- ~~Phase 3: `research_runner.py` (no LangGraph)~~ → `src/research_runner.py` ✅
+- ~~Phase 4: Span-level citations~~ → `src/citations.py` ✅
+- ~~Phase 5: Gap analysis + iterative deepening~~ → `src/gap_analysis.py` ✅
+
+**v0.8.1 hardening (just shipped):**
+- Runner correctness (synthesis contract, fetch order, use_llm flag)
+- Iterative deepening dedup (no plan mutation, no task/URL re-runs)
+- Release hygiene (pyproject name/version, docker-compose env split,
+  INSTALL.md rewrite, GitHub Actions CI)
+- See `RELEASE_NOTES_v0.8.1.md` (forthcoming) and `.hermes/plans/ISSUES.md`
+  for the full diff.
+
+**v0.9.0+ candidates (still on the shelf):**
+- **Phase 6: LangGraph adapter (optional)** — only if we need
+  checkpointing / human-in-the-loop / fault tolerance. Not planned.
+- **Exa + Tavily providers** (Phase 7) — keys verified working, integration
+  deferred until v0.8.1 hardening is reviewed.
+- **LLM enrichment** for synthesis (`use_llm=True` already in runner
+  contract, wire-up deferred).
 
 **Explicitly NOT planned:**
-- Tavily / Exa / Firecrawl provider interface (premature — 1 provider, no need to abstract)
+- Tavily / Exa / Firecrawl in v0.8.x (premature — 1 provider, no need
+  to abstract) — moved to v0.9.0
 - Vector DB / Graph DB (premature — no claim/evidence model yet)
-- Multi-agent roles in separate processes (premature — keep functions in one process)
+- Multi-agent roles in separate processes (premature — keep functions
+  in one process)
 
 ---
 

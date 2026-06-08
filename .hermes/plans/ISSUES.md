@@ -247,7 +247,7 @@ to implement them and they are not blocking v0.8.x.
 
 | Topic | Status | Notes |
 |---|---|---|
-| **#016** — `DEFERRED` Typed `ResearchState` (4-9 dataclasses) | backlog | Recommended start with 4 (ResearchState, SearchTask, Evidence, Claim), not 9 |
+| **#016** — `PARTIAL→DONE 2026-06-08` Typed `ResearchState` | ✅ PARTIAL DONE | Implemented: `SearchTask`, `Claim`, `ResearchState` (mutable container), reuse `EvidenceWindow` from `evidence.py`. **NOT done**: `SearchHit`, `Document`, `ClaimVerdict`, `ResearchPlan`, `ResearchReport` (5 deferred — no consumer yet, dicts are fine at this scale). Tests: `tests/test_models.py` (15 cases, all pass). |
 | **#017** — `DEFERRED` `planner.py::build_research_plan()` | backlog | Uses `adapt_query()` + `classify_intent()` |
 | **#018** — `DEFERRED` `research_runner.py::deep_research_v2()` | backlog | Strangler refactor of legacy `deep_research()` |
 | **#019** — `DEFERRED` Span-level citations (Claim→EvidenceWindow→[N]) | backlog | Phase 4 of external plan |

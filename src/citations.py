@@ -41,56 +41,165 @@ _WS_RE = re.compile(r"\s+")
 
 
 def _normalize_ws(s: str) -> str:
-    """Collapse all whitespace runs to a single space, strip ends."""
+    """Collapse all whitespace runs to a single space, strip ends.
+
+    Plain normalize. For offset-preserving normalize, see
+    `_normalize_with_map()` below — used by `find_span()` to return
+    offsets against the **original** text, not the normalized one.
+    """
     return _WS_RE.sub(" ", s).strip()
+
+
+def _normalize_with_map(text: str) -> tuple[str, list[int]]:
+    """Normalize whitespace and return an index map from normalized to original.
+
+    Collapses every whitespace run (`\\s+`) to a single space and strips
+    leading/trailing whitespace, while remembering the position in the
+    original text that each normalized position corresponds to.
+
+    Returns:
+        (normalized_text, index_map) where:
+        - normalized_text: text with whitespace runs collapsed + stripped
+        - index_map: list of len(normalized_text) ints, where
+          index_map[i] = position in the original `text` of the i-th
+          normalized character.
+
+    Invariants:
+        - len(index_map) == len(normalized_text)
+        - For every i, normalized_text[i] == original_text[index_map[i]]
+          (modulo whitespace collapses: the map points to one specific
+          character in the collapsed run, the LITERAL one we keep).
+        - If the original had no leading/trailing whitespace, the map
+          starts at offset 0. If it did, the map shifts accordingly
+          (because the normalized text is also stripped).
+
+    Edge cases:
+        - Empty text → ("", []).
+        - Pure whitespace → ("", []).
+        - Single non-WS char → (char, [0]) (or whichever original offset).
+        - Text with only WS runs of varying length — every collapsed
+          position points to the FIRST char of the original run.
+
+    This is the building block for `find_span()`'s original-offset
+    guarantee (v0.8.1.1 hardening). The map is O(n) memory but only
+    built when Case 2/3 (whitespace-normalized match) is needed.
+    """
+    if not text:
+        return "", []
+
+    # Strip leading whitespace first (we don't include it in normalized).
+    stripped = text.lstrip()
+    leading_offset = len(text) - len(stripped)
+    # Strip trailing whitespace.
+    stripped = stripped.rstrip()
+    if not stripped:
+        return "", []
+
+    normalized_parts: list[str] = []
+    index_map: list[int] = []
+    in_ws_run = False
+    orig_pos = leading_offset  # position in the original text
+
+    for ch in stripped:
+        if ch.isspace():
+            if not in_ws_run:
+                # Start of a whitespace run — emit a single normalized space
+                # and record the original position of THIS char (the first
+                # of the collapsed run).
+                normalized_parts.append(" ")
+                index_map.append(orig_pos)
+                in_ws_run = True
+            # else: skip (collapse this WS char into the previous one)
+        else:
+            normalized_parts.append(ch)
+            index_map.append(orig_pos)
+            in_ws_run = False
+        orig_pos += 1
+
+    return "".join(normalized_parts), index_map
 
 
 def find_span(claim: Claim, evidence_text: str) -> tuple[int, int]:
     """Locate the `claim.text` substring inside `evidence_text`.
 
     Returns (start_offset, end_offset) on hit, where end_offset is exclusive
-    (Python-style: `evidence_text[start:end] == claim.text` when normalized
-    whitespace matches). Returns (-1, -1) on miss.
+    (Python-style: `evidence_text[start:end]` is the span that supports
+    the claim). Returns (-1, -1) on miss.
+
+    IMPORTANT (v0.8.1.1 hardening): all returned offsets refer to the
+    **original** `evidence_text`, not any whitespace-normalized version.
+    A downstream citation marker `[doc_0:120-187]` is therefore a
+    reproducible pointer into the actual document.
 
     Strategy (cheapest first):
-        1. Direct substring search.
-        2. Whitespace-normalized substring search (collapse all \\s+ to ' ').
+        1. Direct substring search (offsets trivially original).
+        2. Whitespace-normalized substring search; convert the
+           normalized-space hit back to the original-space offsets
+           via the index map from `_normalize_with_map()`.
         3. Fuzzy prefix: take the first 30 chars of the normalized claim
-           and search for that. If found, expand to claim length (best-effort
-           span — end is approximate but start is exact).
+           and search for that in the normalized text; if found, expand
+           to claim length and convert both bounds back to original
+           offsets (start is exact; end is approximate because we don't
+           know exactly where the un-normalized claim ends).
 
-    This is intentionally stdlib-only (no rapidfuzz, no LLM). For v0.8.0 the
-    `Claim.text` is already a verbatim sentence extracted by `_extract_facts`
-    (a regex over sentence boundaries), so case 1 hits in the great majority
-    of cases. The fallback handles reformatting by `_synthesize`-style
-    downstream consumers.
+    This is intentionally stdlib-only (no rapidfuzz, no LLM). For v0.8.0
+    the `Claim.text` is already a verbatim sentence extracted by
+    `_extract_facts` (a regex over sentence boundaries), so case 1
+    hits in the great majority of cases. The fallback handles
+    reformatting by `_synthesize`-style downstream consumers.
+
+    Failure modes (all return (-1, -1)):
+        - Empty claim text.
+        - Empty evidence text.
+        - No substring / normalized / fuzzy-prefix hit.
     """
     if not claim.text or not evidence_text:
         return (-1, -1)
 
-    # Case 1: direct
+    # Case 1: direct hit. Offsets are already in original space.
     idx = evidence_text.find(claim.text)
     if idx >= 0:
         return (idx, idx + len(claim.text))
 
-    # Case 2: whitespace-normalized
+    # Case 2: whitespace-normalized hit. We need to convert the
+    # normalized-space offset back to the original-space offset.
+    norm_text, norm_to_orig = _normalize_with_map(evidence_text)
     norm_claim = _normalize_ws(claim.text)
-    norm_text = _normalize_ws(evidence_text)
     idx = norm_text.find(norm_claim)
-    if idx >= 0:
-        # Offsets refer to the *normalized* text, not the original.
-        # We document this in the docstring above. For downstream citation
-        # we return normalized offsets, which is fine because consumers
-        # use the normalized text for display.
-        return (idx, idx + len(norm_claim))
+    if idx >= 0 and norm_to_orig:
+        # Map the start: the i-th normalized char is at original
+        # position norm_to_orig[i]. So the hit starts at that original
+        # position.
+        orig_start = norm_to_orig[idx]
+        # End: idx + len(norm_claim) is exclusive in normalized space.
+        # If it's within the map, map it back. If it's past the end of
+        # the map (shouldn't happen for a find hit, but be safe), fall
+        # back to orig_start + len(claim.text) — a best-effort estimate.
+        end_in_norm = idx + len(norm_claim)
+        if end_in_norm <= len(norm_to_orig):
+            # The last normalized char of the hit corresponds to the
+            # original position of the LAST char in the collapsed span.
+            # We want a Python-style end (exclusive) — so we add 1 to
+            # get past that last original char.
+            last_orig = norm_to_orig[end_in_norm - 1]
+            orig_end = last_orig + 1
+        else:
+            # Defensive: estimate.
+            orig_end = orig_start + len(claim.text)
+        return (orig_start, orig_end)
 
-    # Case 3: fuzzy prefix (first 30 chars)
+    # Case 3: fuzzy prefix (first 30 chars of normalized claim).
     if len(norm_claim) >= 10:
         prefix = norm_claim[:30]
         idx = norm_text.find(prefix)
-        if idx >= 0:
-            # Approximate end: use len(norm_claim) as best-effort.
-            return (idx, idx + len(norm_claim))
+        if idx >= 0 and norm_to_orig:
+            orig_start = norm_to_orig[idx]
+            # Approximate end: best-effort. The claim is len(norm_claim)
+            # normalized chars long; we don't know exactly which original
+            # positions that covers, so we use len(claim.text) as a
+            # safe upper bound for the original offset distance.
+            orig_end = orig_start + len(claim.text)
+            return (orig_start, orig_end)
 
     return (-1, -1)
 

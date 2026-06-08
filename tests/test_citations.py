@@ -23,6 +23,7 @@ from citations import (
     citation_stats,
     assert_citations_complete,
     _CITATION_RE,
+    _normalize_with_map,
     _normalize_ws,
 )
 
@@ -62,24 +63,50 @@ class TestFindSpanNormalized:
 
     def test_collapses_multiple_spaces(self):
         c = Claim(text="5 июня 2026")
-        s, e = find_span(c, "Сегодня  5   июня    2026  года.")  # extra spaces
-        # Offsets are against normalized text, not original. We just check
-        # the *normalized substring* is found and the length matches.
+        original = "Сегодня  5   июня    2026  года."
+        s, e = find_span(c, original)
+        # v0.8.1.1: offsets are in ORIGINAL space, not normalized. So
+        # evidence_text[s:e] is a slice of the original document that
+        # covers the claim (with extra whitespace preserved as in source).
         assert s >= 0
         assert e > s
-        assert e - s == len(_normalize_ws(c.text))
+        # The original-space span must include the claim's characters
+        # in order, even if the slice has extra whitespace.
+        span_text = original[s:e]
+        assert "5" in span_text and "июня" in span_text and "2026" in span_text
+        # And the slice must be longer than the normalized claim because
+        # of the extra spaces (2-4 spaces collapsed to 1 in normalized).
+        assert e - s > len(_normalize_ws(c.text))
 
     def test_collapses_newlines(self):
         c = Claim(text="5 июня 2026")
-        s, e = find_span(c, "Сегодня\n5\nиюня\n2026\nгода.")
+        original = "Сегодня\n5\nиюня\n2026\nгода."
+        s, e = find_span(c, original)
         assert s >= 0
-        assert e - s == len(_normalize_ws(c.text))
+        assert e > s
+        # v0.8.1.1: offsets in original space; the slice contains
+        # the embedded newlines from the source.
+        span_text = original[s:e]
+        assert "5" in span_text and "июня" in span_text and "2026" in span_text
+        # Critical invariant: the slice is a substring of the ORIGINAL.
+        # We verify by reconstructing the slice and checking the chars at
+        # the start/end offsets match the claim boundaries.
+        assert original[s] == "5"   # first char of the claim in original
+        assert original[e - 1] == "6"  # last char of "2026" in original
 
     def test_collapses_tabs(self):
         c = Claim(text="foo bar")
-        s, e = find_span(c, "before\tfoo\t\tbar\tend")
+        original = "before\tfoo\t\tbar\tend"
+        s, e = find_span(c, original)
         assert s >= 0
-        assert e - s == len("foo bar")
+        assert e > s
+        # v0.8.1.1: original-space offsets — span is the slice
+        # "foo\t\tbar" (with tabs preserved) or similar.
+        span_text = original[s:e]
+        assert "foo" in span_text and "bar" in span_text
+        # The slice must be longer than "foo bar" because of the
+        # embedded tabs (collapsed in normalized, but here preserved).
+        assert e - s > len("foo bar")
 
 
 class TestFindSpanFuzzyPrefix:
@@ -412,3 +439,136 @@ class TestCitationIntegration:
         augmented = [replace(c, evidence_window=w) for c, w in zip(claims, windows)]
         with pytest.raises(AssertionError, match="не упоминается"):
             assert_citations_complete(augmented)
+
+
+# ========================================================================
+# v0.8.1.1 hardening: tests for the offset-preserving normalizer.
+# ChatGPT P1 (v0.8.0 review): find_span() returned offsets against
+# whitespace-normalized text, not the original `evidence_text`. A citation
+# marker like [doc_0:120-187] was therefore not a reproducible pointer
+# into the actual document.
+#
+# Fix: _normalize_with_map() builds (normalized_text, index_map) so
+# find_span() can convert any normalized-space hit back to original-space
+# offsets. These tests pin the new contract.
+# ========================================================================
+
+
+class TestNormalizeWithMap:
+    """Unit tests for the offset-preserving whitespace normalizer."""
+
+    def test_empty_string(self):
+        norm, idx_map = _normalize_with_map("")
+        assert norm == ""
+        assert idx_map == []
+
+    def test_pure_whitespace(self):
+        norm, idx_map = _normalize_with_map("   \t\n  ")
+        assert norm == ""
+        assert idx_map == []
+
+    def test_already_normalized(self):
+        """No whitespace runs: map should be identity (0, 1, 2, ...)."""
+        norm, idx_map = _normalize_with_map("hello world")
+        assert norm == "hello world"
+        assert idx_map == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        # Sanity: the i-th normalized char is the i-th original char.
+        for i, ch in enumerate(norm):
+            assert ch == "hello world"[idx_map[i]]
+
+    def test_collapses_whitespace_runs(self):
+        """Multiple spaces / tabs / newlines collapse to a single ' '."""
+        text = "  hello   \t\n  world  "
+        norm, idx_map = _normalize_with_map(text)
+        assert norm == "hello world"
+        # Map length must equal normalized length.
+        assert len(idx_map) == len(norm)
+        # Each index in the map must point to a char in the original.
+        for i, orig_i in enumerate(idx_map):
+            assert 0 <= orig_i < len(text)
+        # Round-trip: the chars at the mapped positions reconstruct norm.
+        for i, ch in enumerate(norm):
+            assert ch == text[idx_map[i]]
+
+    def test_map_offsets_preserve_original_positions(self):
+        """Map must point to the FIRST char of each collapsed WS run."""
+        text = "ab   cd"  # 3 spaces between ab and cd
+        norm, idx_map = _normalize_with_map(text)
+        assert norm == "ab cd"
+        # Position 0 ('a') -> original 0
+        # Position 1 ('b') -> original 1
+        # Position 2 (' ') -> original 2 (FIRST space, not 3 or 4)
+        # Position 3 ('c') -> original 5
+        # Position 4 ('d') -> original 6
+        assert idx_map == [0, 1, 2, 5, 6]
+
+    def test_stripped_leading_whitespace_shifts_map(self):
+        """Leading WS is dropped from normalized, so map starts past it."""
+        text = "   hello"
+        norm, idx_map = _normalize_with_map(text)
+        assert norm == "hello"
+        # Map starts at original offset 3 (first 'h').
+        assert idx_map == [3, 4, 5, 6, 7]
+
+
+class TestFindSpanReturnsOriginalOffsets:
+    """End-to-end check: find_span offsets are in ORIGINAL text space.
+
+    The slice evidence_text[s:e] must be a substring of the ORIGINAL
+    text, not a substring of the whitespace-normalized text. This is
+    the contract ChatGPT flagged as broken in the v0.8.0 review.
+    """
+
+    def test_direct_hit_uses_original_offsets(self):
+        c = Claim(text="5 июня 2026")
+        original = "Сегодня 5 июня 2026 года."
+        s, e = find_span(c, original)
+        assert s == 8  # position of '5' in original
+        assert original[s:e] == "5 июня 2026"
+
+    def test_normalized_match_returns_original_offsets(self):
+        """When claim is found only after WS normalization, offsets
+        must still point into the original text (not the normalized)."""
+        c = Claim(text="5 июня 2026")
+        original = "Сегодня  5   июня    2026  года."  # extra spaces
+        s, e = find_span(c, original)
+        # original[s:e] must be a slice of the original, containing
+        # the claim with its extra spaces preserved.
+        slice_text = original[s:e]
+        assert slice_text.startswith("5")
+        assert slice_text.endswith("2026")
+        assert "5" in slice_text and "июня" in slice_text and "2026" in slice_text
+        # And the slice must be a real substring of the original.
+        assert slice_text in original
+
+    def test_newline_normalization_returns_original_offsets(self):
+        c = Claim(text="5 июня 2026")
+        original = "Сегодня\n5\nиюня\n2026\nгода."
+        s, e = find_span(c, original)
+        slice_text = original[s:e]
+        # Slice must include the newlines from the source.
+        assert "\n" in slice_text
+        assert slice_text in original
+        # Start should be the '5' (not the 'С' of Сегодня).
+        assert original[s] == "5"
+
+    def test_citation_marker_points_into_original(self):
+        """End-to-end: a downstream consumer can use [s:e] to slice
+        the original text and get a meaningful span (not garbage)."""
+        c = Claim(text="5 июня 2026")
+        original = "Преамбула. Сегодня  5   июня    2026  года. Постскриптум."
+        s, e = find_span(c, original)
+        marker = f"[doc_0:{s}-{e}]"
+        # Reconstruct what a reader would see: take the slice from original.
+        # The slice must contain the date components in order.
+        slice_text = original[s:e]
+        assert "5" in slice_text
+        assert "июня" in slice_text
+        assert "2026" in slice_text
+        # And the marker should be parseable by _CITATION_RE.
+        import re as _re
+        m = _re.search(r"\[doc_(\d+):(\d+)-(\d+)\]", marker)
+        assert m is not None
+        doc_id, start_s, end_s = m.groups()
+        assert int(start_s) == s
+        assert int(end_s) == e

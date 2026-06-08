@@ -374,6 +374,155 @@ class TestRunResearchPipeline:
         assert result.elapsed_sec >= 0
 
 
+# ============================================================
+# Phase 4 (#019) — span-level citation integration
+# ============================================================
+
+
+class TestRunnerSpanCitations:
+    """Verify the runner populates `state.claims`, `state.evidence`, and
+    `synthesis.coverage["citation_stats"]` after a successful run."""
+
+    def test_state_claims_populated(self, patch_network):
+        """The runner should call `_extract_typed_claims_with_citations`
+        and append typed `Claim` objects to `state.claims`."""
+        result = run_research("Falcon 9", approved_plan=True)
+        assert result.state is not None
+        assert len(result.state.claims) >= 1, "expected at least one typed Claim"
+        for c in result.state.claims:
+            # Each claim should be a typed Claim (not a string)
+            assert hasattr(c, "text")
+            assert hasattr(c, "evidence_window")
+
+    def test_state_evidence_populated(self, patch_network):
+        """`state.evidence` should be a list of EvidenceWindow objects
+        (one per cited claim, with non-None windows)."""
+        result = run_research("Falcon 9", approved_plan=True)
+        assert result.state is not None
+        # At least one claim should have found a span in the document
+        assert len(result.state.evidence) >= 1
+        for w in result.state.evidence:
+            assert hasattr(w, "offset_start")
+            assert hasattr(w, "offset_end")
+            assert hasattr(w, "source_url")
+
+    def test_synthesis_coverage_has_citation_stats(self, patch_network):
+        """After synthesis, `synth.coverage["citation_stats"]` should be
+        populated with `{total, cited, uncited, stub, coverage,
+        non_stub_coverage}`."""
+        result = run_research("Falcon 9", approved_plan=True)
+        assert result.synthesis is not None
+        cov = result.synthesis.coverage
+        assert isinstance(cov, dict)
+        assert "citation_stats" in cov
+        stats = cov["citation_stats"]
+        for key in ("total", "cited", "uncited", "stub", "coverage", "non_stub_coverage"):
+            assert key in stats, f"missing {key} in citation_stats"
+        # Sanity: total should equal len(state.claims)
+        assert stats["total"] == len(result.state.claims)
+        # Sanity: cited + uncited == total
+        assert stats["cited"] + stats["uncited"] == stats["total"]
+
+    def test_synthesis_coverage_has_inline_citations(self, patch_network):
+        """`synth.coverage["inline_citations"]` should be a list of
+        formatted strings with `[doc_N:start-end]` markers."""
+        result = run_research("Falcon 9", approved_plan=True)
+        cov = result.synthesis.coverage
+        assert "inline_citations" in cov
+        inline = cov["inline_citations"]
+        # We don't know exactly how many claims match the doc text, but
+        # the structure should be present
+        assert isinstance(inline, list)
+        for s in inline:
+            assert "[doc_" in s, f"missing citation marker in: {s!r}"
+            assert ":" in s
+            assert "-" in s
+
+    def test_unverified_claims_tracked(self, patch_network):
+        """`synth.coverage["unverified_claims"]` should list any claim
+        whose text was not found in any document (so the runner / LLM
+        can flag them as unverified)."""
+        result = run_research("Falcon 9", approved_plan=True)
+        cov = result.synthesis.coverage
+        assert "unverified_claims" in cov
+        assert isinstance(cov["unverified_claims"], list)
+
+    def test_citation_invariant_holds_with_real_docs(self, patch_network):
+        """Every non-stub claim from the typed extraction should either
+        have a window or be in `unverified_claims`. The
+        `assert_citations_complete` invariant (with raise_on_missing=False)
+        should give us consistent counts."""
+        from citations import assert_citations_complete, citation_stats
+
+        result = run_research("Falcon 9", approved_plan=True)
+        # Without raising, we just want the counts
+        cited, uncited = assert_citations_complete(
+            result.state.claims, raise_on_missing=False
+        )
+        stats = citation_stats(result.state.claims)
+        # Numbers must agree
+        assert cited == stats["cited"]
+        assert uncited == stats["uncited"] - stats["stub"]
+        # cited + (uncited including stubs) == total
+        assert cited + stats["uncited"] == stats["total"]
+
+    def test_citation_survives_json_serialization(self, patch_network):
+        """EvidenceWindow.to_dict() must include source_url/source_title/score
+        (Phase 4 fields), and the claim augmentation should round-trip
+        through `to_dict()` cleanly."""
+        from dataclasses import asdict
+        from citations import build_evidence_window
+        from evidence import EvidenceWindow
+
+        result = run_research("Falcon 9", approved_plan=True)
+        # Pick first claim with a window
+        cited_claim = next(
+            (c for c in result.state.claims if c.evidence_window is not None),
+            None,
+        )
+        assert cited_claim is not None
+        d = asdict(cited_claim)
+        assert "evidence_window" in d
+        assert d["evidence_window"] is not None
+        # The window should have the Phase 4 fields
+        assert "source_url" in d["evidence_window"]
+        assert "source_title" in d["evidence_window"]
+        assert "score" in d["evidence_window"]
+
+    def test_no_claims_no_citation_stats(self, monkeypatch):
+        """If the document text is empty (no claims extracted),
+        `synth.coverage` should still be a dict (not crash). No
+        `citation_stats` key is added because the runner only injects
+        it when `state.claims` is non-empty (avoid noise when there's
+        nothing to count)."""
+        monkeypatch.setattr(
+            "research_runner.web_search",
+            lambda q, **kw: [_make_hit("https://a.com")],
+        )
+        monkeypatch.setattr(
+            "research_runner.fetch_url",
+            lambda u, **kw: _make_doc(u, text=""),  # empty doc
+        )
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
+                "verification_details": [], "llm_enhanced": False,
+                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+            },
+        )
+        result = run_research("Falcon 9", approved_plan=True)
+        assert result.status == "done"
+        assert result.state is not None
+        assert result.state.claims == []  # no claims because empty docs
+        # citation_stats key is NOT injected when there are no claims
+        # (this is by design — empty stats would be noise). coverage
+        # is still a valid dict from synthesize().
+        cov = result.synthesis.coverage
+        assert isinstance(cov, dict)
+        assert "citation_stats" not in cov
+
+
 class TestRunResearchError:
     def test_planner_exception_caught(self, monkeypatch):
         """If `build_research_plan` raises, runner returns status='error'."""

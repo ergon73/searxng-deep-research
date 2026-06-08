@@ -12,6 +12,7 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 - `src/models.py` — typed state skeleton (Phase 1, v0.8.0: `SearchTask`, `Claim`, `EvidenceWindow`, `ResearchState`)
 - `src/planner.py` — research plan builder (Phase 2, v0.8.0: `build_research_plan()` composes `adapt_query()` + `classify_intent()` into typed `SearchTask`s with falsification for news/security/product/technical)
 - `src/research_runner.py` — pipeline orchestrator (Phase 3, v0.8.0: `run_research()` / `deep_research_v2()` — strangler refactor of `deep_research()` using typed `ResearchPlan` + `ResearchState`, with confirmation gate)
+- `src/citations.py` — span-level citation machinery (Phase 4, v0.8.0: `find_span()` locates `Claim.text` inside document, `build_evidence_window()` produces an `EvidenceWindow` with `[start,end]` offsets + source URL/title/score, `format_cited_claim()` emits `[doc_N:start-end]` markers, `citation_stats()` reports coverage, `assert_citations_complete()` enforces the invariant that every non-stub claim has an `evidence_window`)
 - `src/gap_analysis.py` — gap detection + iterative deepening (Phase 5, v0.8.0: `analyze_gaps()` detects too_few_sources / low_diversity / low_confidence / contradictions / unsupported_claims; `gaps_to_search_tasks()` converts to priority-50 retry tasks)
 - `src/redact.py` — secret redaction (mandatory before archive/chat)
 - `src/hermes_searxng.py` — SearXNG JSON helper

@@ -66,12 +66,21 @@ class EvidenceWindow:
         match_terms: Terms from the claim that were found in this window.
         match_score: 0.0-1.0; higher = more claim-terms matched.
                      A score of 0.0 means "fallback" (no claim found).
+        source_url: URL of the source (Phase 4, #019 — for span-level
+                    citations). Empty string if unknown.
+        source_title: Human-readable title of the source. Empty if unknown.
+        score: Source-level score (e.g. SearXNG ranking) carried through.
     """
     text: str
     offset_start: int
     offset_end: int
     match_terms: list[str] = field(default_factory=list)
     match_score: float = 0.0
+    # Phase 4 (#019) — span-level citations: source provenance + score.
+    # Backward-compatible defaults so existing call sites keep working.
+    source_url: str = ""
+    source_title: str = ""
+    score: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +89,9 @@ class EvidenceWindow:
             "offset_end": self.offset_end,
             "match_terms": self.match_terms,
             "match_score": self.match_score,
+            "source_url": self.source_url,
+            "source_title": self.source_title,
+            "score": self.score,
         }
 
 

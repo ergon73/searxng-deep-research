@@ -61,6 +61,12 @@ class Claim:
     Carries enough structure for numeric / temporal / entity verification.
     `value` is always a string (we do not coerce types here — extraction may
     be approximate; the verifier decides how to interpret it).
+
+    Phase 4 (#019, span-level citations): `evidence_window` is set by the
+    runner after extraction (via `dataclasses.replace`) to point at the
+    exact quote in the source that supports the claim. `is_stub` flags
+    claims that are placeholders for LLM enrichment (these are exempt
+    from the "every claim needs evidence" invariant).
     """
     text: str                            # original surface form, e.g. "5 июня 2026"
     subject: str | None = None           # e.g. "Магнитная буря"
@@ -70,9 +76,17 @@ class Claim:
     date: str | None = None              # ISO date if known
     location: str | None = None
     polarity: str = "unknown"            # "positive" | "negative" | "unknown"
+    is_stub: bool = False                # Phase 4: placeholder flag (LLM-only)
+    evidence_window: "EvidenceWindow | None" = None  # Phase 4: span pointer
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # asdict() handles nested EvidenceWindow via its own to_dict()
+        # automatically (dataclasses.asdict recurses), but we keep an
+        # explicit branch to control the None case shape.
+        if self.evidence_window is None:
+            d["evidence_window"] = None
+        return d
 
 
 @dataclass

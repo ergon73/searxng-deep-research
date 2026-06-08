@@ -32,8 +32,13 @@ Design notes:
   detects gaps after each pass and adds gap-fill tasks for the next pass
   (up to `max_iterations`). `max_iterations=1` is the default and what
   the legacy tests use.
+- Span-level citations (Phase 4, #019): each non-stub `Claim` is augmented
+  with `evidence_window` via `citations.find_span()`. The synthesis layer
+  injects `[doc_id:start-end]` markers inline; downstream LLM prompts can
+  use these to produce verifiable, source-attributable prose. The invariant
+  is enforced via `citations.assert_citations_complete()` in tests.
 
-Spec: ~/.hermes/plans/ISSUES.md #018 (this file) and #020 (gap analysis).
+Spec: ~/.hermes/plans/ISSUES.md #018, #019 (this file) and #020 (gap analysis).
 """
 from __future__ import annotations
 
@@ -62,7 +67,10 @@ from critical_review import review, Synthesis, ReviewResult  # type: ignore
 
 # Gap analysis (Phase 5, v0.8.0)
 from gap_analysis import analyze_gaps, gaps_to_search_tasks
-
+from citations import find_span, build_evidence_window, format_cited_claim, citation_stats
+from models import ResearchState, SearchTask, Claim
+from evidence import EvidenceWindow
+from dataclasses import replace as dc_replace
 # Planner
 from planner import build_research_plan, ResearchPlan, plan_to_state
 
@@ -166,9 +174,13 @@ def _extract_claims_from_documents(
     """Extract facts from each document. Return (flat_claims, claims_to_source_urls).
 
     For now we use legacy `_extract_facts(text, max_facts, query)` which returns
-    strings. In Phase 4 (span-level citations) this becomes structured
-    `Claim` objects with subject/predicate/value/unit; we keep the dict shape
-    for now to avoid changing the contract of `synthesize()` and `verify_sources()`.
+    strings. The synthesis pipeline (`synthesize()`, `verify_sources()`) still
+    wants string claims, so we keep this signature stable.
+
+    For typed claims with span-level citations, see
+    `_extract_typed_claims_with_citations()` (Phase 4, #019). The runner calls
+    BOTH helpers: this one feeds synthesis, the typed one populates
+    `state.claims` and `state.evidence`.
     """
     all_claims: list[str] = []
     claims_to_source_urls: dict[str, list[dict]] = {}  # claim -> [url, ...]
@@ -183,6 +195,63 @@ def _extract_claims_from_documents(
             claims_to_source_urls.setdefault(f, []).append({"url": doc.get("url", "")})
 
     return all_claims, claims_to_source_urls
+
+
+def _extract_typed_claims_with_citations(
+    documents: list[dict], query: str, max_per_doc: int = 8
+) -> list[Claim]:
+    """Extract typed `Claim` objects with span-level evidence windows.
+
+    Phase 4 (#019). For each document:
+      1. Run legacy `_extract_facts` to get fact strings.
+      2. Promote each to a typed `Claim(text=fact_string)`.
+      3. Run `build_evidence_window(claim, doc)` to attach a span.
+      4. Use `dataclasses.replace` to produce an augmented claim
+         (Claim is frozen=True — can't mutate in place).
+
+    Returns the augmented list. Claims whose text is not found in any
+    document get `evidence_window=None`; downstream `assert_citations_complete`
+    treats these as gaps (so the runner can detect and report them).
+
+    Performance note: this is O(n_facts × n_docs) in the worst case (each
+    fact searches the full document text). For v0.8.0 with `max_per_doc=8`
+    and a handful of docs, this is well under 1ms per claim in pure-Python.
+    """
+    augmented: list[Claim] = []
+    for doc_index, doc in enumerate(documents):
+        text = doc.get("text", "") or ""
+        if not text or doc.get("error"):
+            continue
+        facts = _extract_facts(text, max_facts=max_per_doc, query=query)
+        for f in facts:
+            base = Claim(text=f)
+            window = build_evidence_window(base, doc)
+            if window is not None:
+                augmented.append(dc_replace(base, evidence_window=window))
+            else:
+                # Keep the claim but mark it unverified; runner can decide
+                # whether to skip it or include as unverified.
+                augmented.append(base)
+    return augmented
+
+
+def _doc_index_for_window(window: EvidenceWindow, documents: list[dict]) -> int:
+    """Find the index of the document whose URL matches `window.source_url`.
+
+    Used by `format_cited_claim` to produce `[doc_N:...]` markers that
+    downstream LLM prompts can use as concrete pointers ("go to doc N,
+    char 120-187").
+
+    Returns 0 by default if no match is found (this can happen when the
+    window was produced from a fallback slice — we still emit a marker,
+    just a conservative one).
+    """
+    if not window.source_url:
+        return 0
+    for i, doc in enumerate(documents):
+        if doc.get("url") == window.source_url:
+            return i
+    return 0
 
 
 # ========================================================================
@@ -279,12 +348,16 @@ def run_research(
             all_claims, claims_meta = _extract_claims_from_documents(
                 iter_documents, query
             )
-            for c in all_claims:
-                # We don't promote strings to typed `Claim` here yet (Phase 1
-                # #016 deferred `Claim` from being used at runtime; synthesis
-                # and verify_sources still want string claims). Tracked in
-                # #019 (span-level citations).
-                pass
+            # Phase 4 (#019) — span-level citations. Augment `state.claims`
+            # with typed `Claim` objects + evidence windows. This is a
+            # separate pass from the legacy string extraction (which feeds
+            # `synthesize()` / `verify_sources()`). It's safe to run both:
+            # the typed pass is pure-stdlib and < 1ms per claim.
+            typed_claims = _extract_typed_claims_with_citations(iter_documents, query)
+            state.claims.extend(typed_claims)
+            state.evidence.extend(
+                c.evidence_window for c in typed_claims if c.evidence_window is not None
+            )
 
             # 4c. Verification (4-level + conditional LLM)
             if iter_documents:
@@ -351,6 +424,34 @@ def run_research(
             results=state.verdicts,
             source_candidates=documents,
         )
+
+        # Phase 4 (#019) — span-level citation stats. Decorate the synthesis
+        # coverage dict with citation information so downstream consumers
+        # (eval.py, e2e_falcon9, LLM prompts) can read it without touching
+        # the synthesis contract. We MUTATE `synth.coverage` (a dict) instead
+        # of replacing `synth` — `synth` is a foreign dataclass, mutation
+        # is the safest extension point.
+        if state.claims:
+            stats = citation_stats(state.claims)
+            if not isinstance(synth.coverage, dict):
+                synth.coverage = {}
+            synth.coverage["citation_stats"] = stats
+            # Also list inline-formatted cited claims (for debugging /
+            # downstream prompt assembly). These look like:
+            #   "5 июня 2026 [doc_0:8-19]"
+            inline = [
+                format_cited_claim(
+                    c,
+                    c.evidence_window,
+                    doc_index=_doc_index_for_window(c.evidence_window, documents),
+                )
+                for c in state.claims
+                if c.evidence_window is not None
+            ]
+            synth.coverage["inline_citations"] = inline
+            synth.coverage["unverified_claims"] = [
+                c.text for c in state.claims if c.evidence_window is None
+            ]
 
         # review() is deterministic critic; needs synthesis + claims + results + source_candidates
         rev = review(

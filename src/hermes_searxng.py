@@ -3,7 +3,7 @@ hermes_searxng.py — локальный web_search для Hermes-агента.
 
 Подключается к SearXNG-инстансу на 127.0.0.1:8888, отдаёт список результатов.
 SearXNG сам ходит во внешние движки через per-engine proxy
-(см. /opt/searxng/.env_proxy + per-engine proxies в settings.yml).
+(см. config/settings.yml — engines с proxy.disabled=false).
 
 Использование в execute_code:
     from hermes_searxng import web_search, news_search
@@ -15,44 +15,9 @@ import json
 import ssl
 import time
 from typing import Optional
-from pathlib import Path
 
 BASE = "http://127.0.0.1:8888"
 UA = "hermes-bot/1.0 (+local searxng)"
-
-# --- Креды прокси читаем один раз при импорте модуля --------------------
-_PROXY_ENV_PATH = Path("/opt/searxng/.env_proxy")
-
-
-def _load_proxy() -> Optional[str]:
-    """Читает .env_proxy и возвращает URL вида http://user:pass@host:port,
-    либо None, если файл отсутствует / неполный.
-    Креды не логируются и не возвращаются наружу.
-    """
-    if not _PROXY_ENV_PATH.exists():
-        return None
-    env = {}
-    for line in _PROXY_ENV_PATH.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip()
-    host = env.get("PROXY_HOST")
-    port = env.get("PROXY_PORT")
-    user = env.get("PROXY_USER")
-    pwd = env.get("PROXY_PASS")
-    if not all([host, port, user, pwd]):
-        return None
-    return f"http://{user}:{pwd}@{host}:{port}"
-
-
-PROXY_URL = _load_proxy()
-
-
-def _has_proxy() -> bool:
-    return PROXY_URL is not None
 
 
 # --- основной API ------------------------------------------------------
@@ -124,6 +89,5 @@ def news_search(query: str, time_range: str = "day", max_results: int = 10, **kw
 
 
 if __name__ == "__main__":
-    print(f"PROXY configured: {bool(PROXY_URL)}")
     for r in web_search("SearXNG docker", time_range="month", max_results=3):
         print(f"  [{r['engine']}] {r['title']}")

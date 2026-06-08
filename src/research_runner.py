@@ -27,10 +27,13 @@ Design notes:
   Without approval, plans with `needs_confirmation=True` return early.
 - For testing, we expose `_dispatch_search_task` and `_fetch_documents`
   as separate helpers so they can be monkeypatched in `test_research_runner.py`.
-- Iterative deepening is intentionally NOT in v0.8.0 (it's #020, Phase 5).
-  `max_iterations=1` is the default and what the tests use.
+- Iterative deepening is implemented in v0.8.0 (Phase 5, see #020) via
+  `gap_analysis.analyze_gaps()` + `gaps_to_search_tasks()`. The runner loop
+  detects gaps after each pass and adds gap-fill tasks for the next pass
+  (up to `max_iterations`). `max_iterations=1` is the default and what
+  the legacy tests use.
 
-Spec: ~/.hermes/plans/ISSUES.md #018.
+Spec: ~/.hermes/plans/ISSUES.md #018 (this file) and #020 (gap analysis).
 """
 from __future__ import annotations
 
@@ -56,6 +59,9 @@ from hermes_deepresearch import (
 # Newer stages
 from synthesis import synthesize
 from critical_review import review, Synthesis, ReviewResult  # type: ignore
+
+# Gap analysis (Phase 5, v0.8.0)
+from gap_analysis import analyze_gaps, gaps_to_search_tasks
 
 # Planner
 from planner import build_research_plan, ResearchPlan, plan_to_state
@@ -241,6 +247,9 @@ def run_research(
     all_hits: list[dict] = []
 
     # 4. Pipeline passes (max_iterations; default 1)
+    # Iterative deepening loop: after each pass, run gap analysis. If gaps
+    # are detected and we have iterations left, add gap-fill tasks and
+    # re-run. If no gaps (or max_iterations reached), finalise.
     try:
         for iteration in range(max_iterations):
             state.iterations = iteration + 1
@@ -293,6 +302,29 @@ def run_research(
                     "llm_enhanced": False, "llm_verified_count": 0,
                     "llm_latency": 0.0, "llm_error": None,
                 })
+
+            # 4d. Gap analysis (NEW in Phase 5)
+            # Update state with the latest snapshot so analyze_gaps sees
+            # the cumulative picture, not just this iteration.
+            state.search_hits = all_hits
+            state.documents = documents
+            gaps = analyze_gaps(state)
+            for g in gaps:
+                state.gaps.append(f"{g.kind}: {g.detail}")
+
+            # 4e. If we have iterations left AND gaps exist, add gap-fill
+            #     tasks and let the loop continue. If no gaps, we can
+            #     early-exit even with iterations remaining (nothing to
+            #     improve).
+            if iteration + 1 < max_iterations and gaps:
+                new_tasks = gaps_to_search_tasks(
+                    gaps,
+                    original_query=query,
+                    route=plan.intent.route,
+                    language=plan.adapted.get("language", "en"),
+                )
+                plan.search_tasks.extend(new_tasks)
+            # else: no more iterations OR no gaps → loop ends naturally
     except Exception as e:
         return ResearchResult(
             status="error",
@@ -303,7 +335,7 @@ def run_research(
             elapsed_sec=time.time() - t0,
         )
 
-    # 5. Stash raw hits in state
+    # 5. Stash raw hits in state (if not already done in 4d)
     state.search_hits = all_hits
     state.documents = documents
 

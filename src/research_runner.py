@@ -141,18 +141,32 @@ def _fetch_documents(
 ) -> list[dict]:
     """Fetch a list of URLs in parallel, return list of {url, text, title, ...}.
 
-    Mirrors the parallel-fetch logic in legacy `deep_research()`.
+    The returned list preserves the order of the input `urls`. This is
+    critical for `verify_sources()`: it relies on `top1 = documents[0]`
+    being the highest-ranked source, not "the URL that happened to
+    finish fetching first".
+
+    Implementation: dispatch all fetches, collect results into a
+    `by_url` dict keyed by URL, then re-emit in the original order.
     """
-    out: list[dict] = []
+    by_url: dict[str, dict] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCH) as ex:
         futures = {ex.submit(fetch_url, u, max_chars=max_chars): u for u in urls}
         for fut in concurrent.futures.as_completed(futures):
             u = futures[fut]
-            fr = fut.result() or {"url": u, "error": "fetch returned None"}
+            try:
+                fr = fut.result()
+            except Exception as e:
+                fr = {"url": u, "error": f"{type(e).__name__}: {e}"}
+            if fr is None:
+                fr = {"url": u, "error": "fetch returned None"}
             if "url" not in fr:
                 fr["url"] = u
-            out.append(fr)
-    return out
+            by_url[u] = fr
+    # Emit in the original URL order. If a URL is somehow missing from
+    # by_url (shouldn't happen with the dict-collect above, but be safe),
+    # fall back to a placeholder so the output length matches input.
+    return [by_url.get(u, {"url": u, "error": "missing fetch result"}) for u in urls]
 
 
 def _dedup_hits_by_canonical(hits: list[dict]) -> list[dict]:
@@ -252,6 +266,46 @@ def _doc_index_for_window(window: EvidenceWindow, documents: list[dict]) -> int:
         if doc.get("url") == window.source_url:
             return i
     return 0
+
+
+def _flatten_verification_results(verdicts: list[dict] | list[Any]) -> list[dict]:
+    """Flatten aggregate verification dicts into per-fact result dicts.
+
+    `verify_sources()` returns an aggregate dict of the form:
+        {
+            "verified_facts": int,
+            "total_facts": int,
+            "verification_rate": float,
+            "verification_details": [
+                {"fact": str, "verdict": str, "supporting_sources": [...], ...},
+                ...
+            ],
+            ...
+        }
+
+    But `synthesize()` (and `review()`) expect `results` to be a list of
+    per-fact dicts, not a list of aggregate dicts. The runner stores the
+    aggregate in `state.verdicts` (useful for audit / coverage), but for
+    synthesis we need to flatten.
+
+    This is the data-flow fix from the v0.8.1 review (Phase A #1):
+    before this helper, `synthesize()` saw `total=1` aggregate instead of
+    `total=N` facts, and coverage/confidence were mathematically wrong.
+
+    The input type is `list[dict] | list[Any]` because in test scenarios
+    we may pass malformed aggregates (None, strings) to verify the
+    function is robust. The runtime isinstance() check handles both.
+    """
+    out: list[dict] = []
+    for v in (verdicts or []):
+        if not isinstance(v, dict):
+            continue
+        details = v.get("verification_details", [])
+        if isinstance(details, list):
+            for d in details:
+                if isinstance(d, dict):
+                    out.append(d)
+    return out
 
 
 # ========================================================================
@@ -366,6 +420,7 @@ def run_research(
                 verification = verify_sources(
                     top1, others, query,
                     time_range=plan.intent.time_range,
+                    use_llm=use_llm,  # v0.8.1 Phase A #3: honour the flag
                 )
                 state.verdicts.append(verification)
             else:
@@ -417,11 +472,26 @@ def run_research(
         # Collect a flat claims list (from last iteration) for synthesis
         flat_claims, _ = _extract_claims_from_documents(documents, query)
 
-        # synthesize() needs (query, claims, results, source_candidates)
+        # Flatten aggregate verification dicts into per-fact result dicts
+        # so synthesize() sees N fact-results, not 1 aggregate dict. This
+        # is the v0.8.1 Phase A #1 fix (synthesis contract mismatch).
+        fact_results = _flatten_verification_results(state.verdicts)
+
+        # synthesize() needs (query, claims, results, source_candidates).
+        # claims are aligned with results 1:1 — `claims[i]` corresponds to
+        # `results[i]`. When `results` is empty, fall back to the legacy
+        # string-claims list (for backward compat with offline smoke tests
+        # that don't go through verification).
+        synth_claims = (
+            [r.get("fact", "") for r in fact_results]
+            if fact_results
+            else flat_claims
+        )
+
         synth = synthesize(
             query=query,
-            claims=flat_claims,
-            results=state.verdicts,
+            claims=synth_claims,
+            results=fact_results,
             source_candidates=documents,
         )
 
@@ -431,10 +501,18 @@ def run_research(
         # the synthesis contract. We MUTATE `synth.coverage` (a dict) instead
         # of replacing `synth` — `synth` is a foreign dataclass, mutation
         # is the safest extension point.
+
+        # Expose aggregate vs per-fact counts in coverage — always, even
+        # when state.claims is empty. This is meta-information about the
+        # pipeline shape, not about the claims themselves, so it should
+        # be available regardless of whether the extractor found anything.
+        if not isinstance(synth.coverage, dict):
+            synth.coverage = {}
+        synth.coverage["verification_aggregate_count"] = len(state.verdicts)
+        synth.coverage["verification_fact_count"] = len(fact_results)
+
         if state.claims:
             stats = citation_stats(state.claims)
-            if not isinstance(synth.coverage, dict):
-                synth.coverage = {}
             synth.coverage["citation_stats"] = stats
             # Also list inline-formatted cited claims (for debugging /
             # downstream prompt assembly). These look like:
@@ -453,11 +531,12 @@ def run_research(
                 c.text for c in state.claims if c.evidence_window is None
             ]
 
-        # review() is deterministic critic; needs synthesis + claims + results + source_candidates
+        # review() is deterministic critic; needs synthesis + claims + results + source_candidates.
+        # Same flatten rule as synthesize() — review expects per-fact results.
         rev = review(
             synthesis=synth,
-            claims=flat_claims,
-            results=state.verdicts,
+            claims=synth_claims,
+            results=fact_results,
             source_candidates=documents,
         )
     except Exception as e:

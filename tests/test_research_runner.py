@@ -34,6 +34,7 @@ from research_runner import (  # noqa: E402
     _dispatch_search_task,
     _extract_claims_from_documents,
     _fetch_documents,
+    _flatten_verification_results,
     deep_research_v2,
     run_research,
 )
@@ -683,3 +684,319 @@ class TestLegacyUntouched:
         assert "top_n" in params
         assert "max_chars" in params
         assert "alt_queries" in params
+
+
+# ============================================================
+# v0.8.1 Phase A — regression tests for the 3 P0 bugs found
+# by the external ChatGPT review (see /tmp/hermes-recomendation-08062026(2).txt).
+# Each test would have FAILED on v0.8.0 and now PASSES after the fix.
+# ============================================================
+
+
+class TestPhaseAFetchDocumentsOrder:
+    """P0 #2: _fetch_documents() must preserve input URL order.
+
+    On v0.8.0, as_completed() reordered results by completion time,
+    so the fastest URL (often a low-rank cache hit) became `top1`,
+    not the highest-ranked source. verify_sources() then verified a
+    random document instead of the best one.
+    """
+
+    def test_slow_first_url_does_not_become_top1(self, monkeypatch):
+        """If URL[0] is slow and URL[1] is fast, the output[0] must
+        still be URL[0] — NOT URL[1] that finished first."""
+
+        import time
+
+        def slow_fetch(url, **kw):
+            time.sleep(0.05)
+            return {"url": url, "text": "slow content", "title": "Slow", "score": 1.0}
+
+        def fast_fetch(url, **kw):
+            time.sleep(0.001)
+            return {"url": url, "text": "fast content", "title": "Fast", "score": 1.0}
+
+        def dispatcher(url, **kw):
+            # URL[0] is "slow", URL[1] is "fast" — both higher indexed
+            if url.endswith("/slow"):
+                return slow_fetch(url, **kw)
+            return fast_fetch(url, **kw)
+
+        monkeypatch.setattr("research_runner.fetch_url", dispatcher)
+
+        urls = [
+            "https://example.com/slow",  # rank 1 — should be output[0]
+            "https://example.com/fast",  # rank 2 — should be output[1]
+        ]
+        result = _fetch_documents(urls)
+
+        assert len(result) == 2
+        assert result[0]["url"].endswith("/slow"), (
+            f"BUG: output[0] is {result[0]['url']!r}, expected /slow. "
+            f"_fetch_documents lost the input order."
+        )
+        assert result[1]["url"].endswith("/fast"), (
+            f"BUG: output[1] is {result[1]['url']!r}, expected /fast."
+        )
+
+    def test_input_order_preserved_with_three_urls(self, monkeypatch):
+        """Three URLs, out-of-order completion — output must be in input order."""
+        import time
+
+        delays = {"a": 0.001, "b": 0.1, "c": 0.05}
+
+        def fetch_with_delay(url, **kw):
+            time.sleep(delays.get(url[-1], 0.0))
+            return {"url": url, "text": f"text of {url[-1]}", "title": url[-1]}
+
+        monkeypatch.setattr("research_runner.fetch_url", fetch_with_delay)
+
+        # Input order: a, c, b — b is slowest but should still be output[2]
+        result = _fetch_documents(
+            ["https://x.com/a", "https://x.com/c", "https://x.com/b"]
+        )
+        assert [d["url"] for d in result] == [
+            "https://x.com/a",
+            "https://x.com/c",
+            "https://x.com/b",
+        ]
+
+    def test_fetch_exceptions_dont_break_order(self, monkeypatch):
+        """If one URL raises, the others must still be in the right slots."""
+
+        def fetch_with_error(url, **kw):
+            if "bad" in url:
+                raise ConnectionError("network down")
+            return {"url": url, "text": "ok", "title": "ok"}
+
+        monkeypatch.setattr("research_runner.fetch_url", fetch_with_error)
+
+        result = _fetch_documents(
+            ["https://a.com", "https://bad.com", "https://c.com"]
+        )
+        assert [d["url"] for d in result] == [
+            "https://a.com",
+            "https://bad.com",
+            "https://c.com",
+        ]
+        # Bad one is in the middle with an error marker
+        assert "error" in result[1]
+        # The other two have their data
+        assert result[0]["text"] == "ok"
+        assert result[2]["text"] == "ok"
+
+
+class TestPhaseAFlattenVerificationResults:
+    """P0 #1: synthesize() expects per-fact results, not aggregate dicts.
+
+    On v0.8.0, runner passed state.verdicts (list of aggregate dicts) to
+    synthesize(). synthesize()._compute_coverage iterated over them as
+    if each were a per-fact result, so:
+      - total = len(state.verdicts) (e.g. 1), not total_facts (e.g. 10)
+      - coverage score = 0.0 (because aggregate has no "verdict" field)
+      - unsupported = [] (because aggregate has no per-fact fields)
+    """
+
+    def test_flatten_extracts_per_fact_dicts(self):
+        """3 verification_details → 3 output dicts, not 1 aggregate."""
+        aggregate = {
+            "verified_facts": 2,
+            "total_facts": 3,
+            "verification_rate": 0.6667,
+            "verification_details": [
+                {"fact": "fact 1", "verdict": "SUPPORTS"},
+                {"fact": "fact 2", "verdict": "INSUFFICIENT"},
+                {"fact": "fact 3", "verdict": "REFUTES"},
+            ],
+            "llm_enhanced": False,
+        }
+        out = _flatten_verification_results([aggregate])
+        assert len(out) == 3
+        assert out[0] == {"fact": "fact 1", "verdict": "SUPPORTS"}
+        assert out[1] == {"fact": "fact 2", "verdict": "INSUFFICIENT"}
+        assert out[2] == {"fact": "fact 3", "verdict": "REFUTES"}
+
+    def test_flatten_handles_empty_verdicts(self):
+        assert _flatten_verification_results([]) == []
+
+    def test_flatten_handles_empty_details(self):
+        aggregate = {
+            "verified_facts": 0, "total_facts": 0,
+            "verification_rate": 0.0, "verification_details": [],
+        }
+        assert _flatten_verification_results([aggregate]) == []
+
+    def test_flatten_handles_multiple_aggregates(self):
+        """Two iterations, each with their own aggregate → N+M details."""
+        a1 = {
+            "verification_details": [
+                {"fact": "a", "verdict": "SUPPORTS"},
+                {"fact": "b", "verdict": "INSUFFICIENT"},
+            ],
+        }
+        a2 = {
+            "verification_details": [
+                {"fact": "c", "verdict": "SUPPORTS"},
+            ],
+        }
+        out = _flatten_verification_results([a1, a2])
+        assert len(out) == 3
+        assert [r["fact"] for r in out] == ["a", "b", "c"]
+
+    def test_flatten_skips_non_dict_entries(self):
+        """Robustness: if some details are None or non-dict, skip them."""
+        aggregate = {
+            "verification_details": [
+                {"fact": "x", "verdict": "SUPPORTS"},
+                None,
+                "garbage",
+                {"fact": "y", "verdict": "REFUTES"},
+            ],
+        }
+        out = _flatten_verification_results([aggregate])
+        assert len(out) == 2
+        assert [r["fact"] for r in out] == ["x", "y"]
+
+    def test_flatten_skips_non_dict_aggregates(self):
+        """Robustness: if a verdict aggregate is None / non-dict, skip."""
+        out = _flatten_verification_results(
+            [None, "not a dict", {"verification_details": [{"fact": "a", "verdict": "SUPPORTS"}]}]
+        )
+        assert len(out) == 1
+
+
+class TestPhaseAUseLLMFlag:
+    """P0 #3: run_research(..., use_llm=False) must propagate to verify_sources().
+
+    On v0.8.0, runner called verify_sources(..., time_range=...) without
+    `use_llm=use_llm`. verify_sources() has default use_llm=True, so the
+    LLM could be triggered even when the caller passed use_llm=False.
+    This violates the offline-test contract and the privacy/cost policy.
+    """
+
+    def test_run_research_passes_use_llm_false_to_verify_sources(self, monkeypatch):
+        """Verify that `use_llm=False` is actually passed through."""
+        captured = []
+
+        def fake_verify_sources(top1, others, query, **kwargs):
+            captured.append(kwargs)
+            return {
+                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
+                "verification_details": [], "llm_enhanced": False,
+                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+            }
+
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources", fake_verify_sources)
+
+        run_research("Falcon 9", approved_plan=True, use_llm=False)
+        assert captured, "verify_sources was not called at all"
+        assert "use_llm" in captured[0], (
+            f"BUG: use_llm not in kwargs passed to verify_sources: {captured[0]}"
+        )
+        assert captured[0]["use_llm"] is False, (
+            f"BUG: use_llm={captured[0]['use_llm']!r}, expected False"
+        )
+
+    def test_run_research_passes_use_llm_true_to_verify_sources(self, monkeypatch):
+        """Verify that the True default also propagates (symmetry check)."""
+        captured = []
+
+        def fake_verify_sources(top1, others, query, **kwargs):
+            captured.append(kwargs)
+            return {
+                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
+                "verification_details": [], "llm_enhanced": False,
+                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+            }
+
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources", fake_verify_sources)
+
+        run_research("Falcon 9", approved_plan=True, use_llm=True)
+        assert captured
+        assert captured[0].get("use_llm") is True
+
+
+class TestPhaseARunnerEndToEnd:
+    """Higher-level checks: the 3 fixes interact correctly through
+    the full pipeline (no regression of the integration).
+    """
+
+    def test_synthesis_receives_per_fact_results(self, monkeypatch):
+        """End-to-end: with 3 verification_details, synthesis sees 3 results."""
+
+        def fake_verify(top1, others, query, **kwargs):
+            return {
+                "verified_facts": 2,
+                "total_facts": 3,
+                "verification_rate": 0.6667,
+                "verification_details": [
+                    {"fact": "F1", "verdict": "SUPPORTS"},
+                    {"fact": "F2", "verdict": "INSUFFICIENT"},
+                    {"fact": "F3", "verdict": "SUPPORTS"},
+                ],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            }
+
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url",
+                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.verify_sources", fake_verify)
+
+        result = run_research("Falcon 9", approved_plan=True)
+        assert result.status == "done"
+        assert result.synthesis is not None
+
+        # The coverage dict should report the correct per-fact count
+        cov = result.synthesis.coverage
+        assert cov.get("verification_fact_count") == 3
+        assert cov.get("verification_aggregate_count") == 1
+        # The synthesis itself should have processed 3 facts, not 1
+        assert cov.get("total") == 3
+        # 2 supports → score = 2/3
+        assert abs(cov.get("score", 0) - 2 / 3) < 1e-4
+
+    def test_top1_is_highest_ranked_not_fastest(self, monkeypatch):
+        """End-to-end: a slow first URL must still be `top1` for verification."""
+        import time
+
+        captured_top1 = []
+
+        def slow_first(url, **kw):
+            if "rank1" in url:
+                time.sleep(0.05)
+            return {"url": url, "text": f"text for {url}", "title": url, "score": 1.0}
+
+        def fake_verify(top1, others, query, **kwargs):
+            captured_top1.append(top1.get("url", ""))
+            return {
+                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
+                "verification_details": [], "llm_enhanced": False,
+                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+            }
+
+        monkeypatch.setattr("research_runner.web_search",
+                            lambda q, **kw: [
+                                _make_hit("https://x.com/rank1"),
+                                _make_hit("https://x.com/rank2"),
+                            ])
+        monkeypatch.setattr("research_runner.fetch_url", slow_first)
+        monkeypatch.setattr("research_runner.verify_sources", fake_verify)
+
+        run_research("Falcon 9", approved_plan=True)
+        assert captured_top1, "verify_sources not called"
+        assert "rank1" in captured_top1[0], (
+            f"BUG: top1 = {captured_top1[0]!r}, expected rank1. "
+            f"verify_sources is verifying the wrong source."
+        )

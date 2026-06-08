@@ -67,6 +67,7 @@ from critical_review import review, Synthesis, ReviewResult  # type: ignore
 
 # Gap analysis (Phase 5, v0.8.0)
 from gap_analysis import analyze_gaps, gaps_to_search_tasks
+from ranking import rank_documents, select_top_n  # v0.8.1.1: source ranking
 from citations import find_span, build_evidence_window, format_cited_claim, citation_stats
 from models import ResearchState, SearchTask, Claim
 from evidence import EvidenceWindow
@@ -430,21 +431,31 @@ def run_research(
             all_hits.extend(iteration_hits)
             deduped_hits = _dedup_hits_by_canonical(iteration_hits)
             # Cross-iteration URL dedup: only fetch URLs we haven't seen.
-            new_urls: list[str] = []
+            # v0.8.1.1: fetch a wider pool (top_n * 3) so ranking has
+            # headroom. The actual top-N selection happens AFTER fetch
+            # and rank, so position bias from SearXNG order doesn't
+            # silently cap the candidate set.
+            candidate_urls: list[str] = []
             for h in deduped_hits:
                 u = h.get("url", "")
                 if u and u not in seen_urls:
                     seen_urls.add(u)
-                    new_urls.append(u)
-                if len(new_urls) >= top_n:
+                    candidate_urls.append(u)
+                if len(candidate_urls) >= top_n * 3:
                     break
 
-            if not new_urls:
+            if not candidate_urls:
                 # Nothing new to fetch; record the gap and break the loop.
                 state.gaps.append("no_search_results")
                 break
 
-            iter_documents = _fetch_documents(new_urls)
+            iter_documents = _fetch_documents(candidate_urls)
+            # v0.8.1.1: rank documents by combined source_score before
+            # selecting top1 or feeding synthesis. This is the fix for
+            # ChatGPT P1 #001 ("top-1 = documents[0]" was just URL order).
+            iter_documents = rank_documents(iter_documents, query)
+            # Cap to top_n AFTER ranking (was top_n before fetch).
+            iter_documents = iter_documents[:top_n]
             documents.extend(iter_documents)
 
             # 4b. Extract claims from documents
@@ -463,6 +474,9 @@ def run_research(
             )
 
             # 4c. Verification (4-level + conditional LLM)
+            # v0.8.1.1: iter_documents is now sorted by source_score desc
+            # (see rank_documents() above), so top1 is the best source by
+            # combined score, NOT "the URL we happened to fetch first".
             if iter_documents:
                 top1 = iter_documents[0]
                 others = iter_documents[1:]

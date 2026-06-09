@@ -1,9 +1,9 @@
 # Release Notes — v0.8.1.3
 
 **Date:** 9 June 2026
-**Tag:** `v0.8.1.3` → `76f498b`
+**Tag:** `v0.8.1.3` → `a15bd3c`
 **Type:** Hygiene mini-batch on top of v0.8.1.2
-**Diff vs v0.8.1.2:** 1 commit on main (`76f498b`), no research logic change
+**Diff vs v0.8.1.2:** 2 commits on main (`1aa69a8` + `a15bd3c`), no research logic change
 
 ---
 
@@ -16,17 +16,24 @@ second external ChatGPT review of `v0.8.1.2`. The themes are:
 2. Per-file-ignores alignment between ISSUES.md and `pyproject.toml`
 3. Release notes commit count accuracy (was 5, actually 6 in the SHA table)
 4. Documentation drift fixes that the first hygiene pass missed
+5. CI workflow expansion (ruff format check, eval dry-run smoke, Node 24 pin)
+6. eval.py silent-skip counters (observability for degraded retrieval)
+7. License sync: MIT LICENSE file added, README/AGENTS/SECURITY drift fixed
 
 **No new pipeline stages, no new providers, no new dependencies.**
 
-One commit:
+Two commits (released in two review batches per Review Budget rule):
 
-| SHA | Title | Purpose |
-|---|---|---|
-| `76f498b` | docs: v0.8.1.2 follow-up | pyproject version bump, ISSUES #008 → DONE, AGENTS entrypoint, eval docstring formula, tests ignore shrink, release notes scaffold |
+| SHA | Title | Batch | Purpose |
+|---|---|---|---|
+| `1aa69a8` | docs: v0.8.1.3 batch A | A: docs + legal | LICENSE, ISSUES #008 → DONE, pyproject 0.8.1.2→0.8.1.3, release notes v0.8.1.2 fix |
+| `a15bd3c` | ci+obs(eval): v0.8.1.3 batch B | B: CI + observability | CI workflow: ruff format + eval dry-run + Node 24; eval.py: 11 silent-skip counters |
 
-This release note file itself is the only addition in `v0.8.1.3` proper
-(written at tag time, not on main).
+Earlier draft of this file (created at tag time during Batch A) referenced
+`76f498b` as the tag target and listed Batch A scope only. Updated at
+`v0.8.1.4` release time to reflect the actual v0.8.1.3 contents
+(Batch A + Batch B), per the "no stale release notes inside same version"
+rule from the third external review.
 
 ---
 
@@ -99,13 +106,21 @@ Closed in v0.8.1.3:
 - **#008** — ISSUES.md detail section now consistent with index (DONE, not WONTFIX)
 - **Drift** — `tests/*` per-file-ignores consistent across `pyproject.toml`,
   `ISSUES.md` (both index and detail), `RELEASE_NOTES_v0.8.1.2.md`
+- **P1.1** — CI workflow: `ruff format --check` + `eval --no-network --dry-run`
+  steps added (Batch B)
+- **P1.2** — Node.js 20 → 24 actions deprecation: `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`
+  env var added to workflow (Batch B; warning remains, tracked as #016 LOW/monitor)
+- **P1.3** — License drift: MIT LICENSE file added; pyproject, README,
+  AGENTS, SECURITY all reference Apache-2.0/MIT canonically (Batch A;
+  canonical is MIT per pyproject, not Apache-2.0 as previously claimed)
+- **P1.5** — `eval.py` silent skip → 11 counters: urls_total,
+  urls_skipped_duplicate/deny_pattern/canonical, fetch_errors,
+  urls_empty_or_error, search_errors, search_no_results, verify_errors,
+  synthesis_errors, review_errors (Batch B)
 
 Still open (out of v0.8.1.3 scope, deferred per external review):
-- **P1.1** — CI workflow expand (`ruff format --check` + `eval --dry-run` step) — v0.8.1.4 mini
-- **P1.2** — Node.js 20 → 24 actions deprecation fix — v0.8.1.4 mini
-- **P1.3** — License drift fix (MIT LICENSE file + sync docs) — v0.8.1.4 mini
-- **P1.4** — `llm_verifier.py` hardcoded `/opt/searxng/.env_llm` → `LLM_ENV_FILE` env — v0.8.1.4 mini
-- **P1.5** — `eval.py` silent skip → counters — v0.8.1.4 mini
+- **P1.4** — `llm_verifier.py` hardcoded `/opt/searxng/.env_llm` → `LLM_ENV_FILE`
+  env var (v0.8.1.5 mini, separate concern)
 - **v0.8.2** — verification correctness (numeric matcher scan all, LLM source_urls, prompt wording)
 - **v0.8.3** — evidence-bound synthesis
 - **v0.9** — ranking/routing (search_votes, news/docs routing)
@@ -116,6 +131,7 @@ Still open (out of v0.8.1.3 scope, deferred per external review):
 - **#013** — `reformulate()` broken for RU (P5)
 - **#014** — long-query degradation (MITIGATED, not fully closed)
 - **#015** — narrative entity filtering (LOW)
+- **#016** — Node 24 warning remains (LOW/monitor)
 
 See `.hermes/plans/ISSUES.md` for the full tracker.
 

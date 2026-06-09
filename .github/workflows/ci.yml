@@ -35,4 +35,11 @@ jobs:
 
       - name: Pytest
         run: |
+          # Create dummy .env_llm for test_compose_config.py::TestEnvLlm.
+          # Real secrets never live in the repo or CI cache. Placeholder values:
+          # - LLM_API_KEY: fake OpenRouter-style key (test asserts only mode 600 + presence)
+          # - LLM_MODEL: matches example default so LLMVerifier can be imported
+          # - SEARXNG_SECRET: dummy hex; the test asserts key exists, not that it works
+          printf 'LLM_API_KEY=sk-test-ci-placeholder\nLLM_MODEL=meta-llama/llama-3.1-8b-instruct:free\nSEARXNG_SECRET=ci_placeholder_secret_do_not_use_in_prod\n' > .env_llm
+          chmod 600 .env_llm
           PYTHONPATH=src python -m pytest -q

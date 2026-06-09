@@ -34,7 +34,7 @@
 
 ### LOW (informational)
 - **#007** — `WONTFIX` — `meta["engines"]` counting `""` as engine (pre-existing)
-- **#008** — `DONE 2026-06-09` — ruff pre-existing style (S310/UP045/I001/UP041/S202/E402/etc). Was WONTFIX (31 errors). Closed in v0.8.1.2 commit `72f8b16` (`ruff check --fix` + `--unsafe-fixes` + `ruff format src scripts` + per-file-ignores): 207→0 errors total. Final per-file-ignores: `tests/*` = `["S", "B", "E402"]`; `scripts/e2e_*.py` = `["S108"]`; 3× `src/*.py` = `["S310"]`.
+- **#008** — `DONE 2026-06-09` — ruff pre-existing style (S310/UP045/I001/UP041/S202/E402/etc). Was WONTFIX (31 errors). Closed in v0.8.1.2 commit `72f8b16` (`ruff check --fix` + `--unsafe-fixes` + `ruff format src scripts` + per-file-ignores): 207→0 errors total. Final per-file-ignores (v0.8.1.3, current in `pyproject.toml`): `tests/*` = `["S101", "S105", "S106", "S108", "E402"]`; `scripts/e2e_*.py` = `["S108"]`; 3× `src/*.py` = `["S310"]`. Shrunk from blanket `["S", "B", "E402"]` to surgical per-rule per v0.8.1.3 hygiene review.
 - **#011** — `DONE 2026-06-06` — test suite not portable (hardcoded `/opt/searxng/src` in conftest, DNS-dependent `test_url_safety`, broken `.env_llm.example` syntax). Fixed via Phase 0 + new skill `portable-test-engineering`.
 
 ---
@@ -143,11 +143,24 @@
 
 ---
 
-### #008 — ruff pre-existing style [LOW | WONTFIX | pre-existing]
+### #008 — ruff pre-existing style [LOW | DONE | 2026-06-09, ref: `72f8b16`]
 
-**Что:** 15 ruff errors в `src/hermes_deepresearch.py` (S310 urlopen без scheme check, UP045 `Optional[X]` вместо `X | None`, I001 import sort, W605 escape sequence в docstring), 16 в `src/llm_verifier.py` (те же + UP041 socket.timeout). Pre-existing до P1.
+**Что было:** 15 ruff errors в `src/hermes_deepresearch.py` (S310 urlopen без scheme check, UP045 `Optional[X]` вместо `X | None`, I001 import sort, W605 escape sequence в docstring), 16 в `src/llm_verifier.py` (те же + UP041 socket.timeout). Pre-existing до P1. **Plus 176 more в v0.8.1.2 sweep** (full repo audit выявил кумулятивный drift: B006, S110/S112, E402, S105, S202, и т.д.).
 
-**Решение:** `--fix` (ruff auto-fixes 13 из них, остальные требуют ручной правки). **Won't fix** в P1-P4 (out of scope). Возможно в P8 docs pass.
+**Что сделано (v0.8.1.2 commit `72f8b16`):**
+- `ruff check --fix --unsafe-fixes` — 184 auto-fixed (mechanical)
+- `ruff format src scripts` — 22 reformatted (mechanical; tests оставлены per user choice)
+- 3 surgical `# noqa` в `scripts/eval.py`, `src/query_adaptation.py`, `src/release_packaging.py`
+- 1 rename: `_SECRET_KEY_NAMES` → `_SECRET_KEY_NAME_PATTERNS` в `src/redact.py` (имя вводило в заблуждение — там regex patterns, не credentials)
+- 5 файлов скопированы в `/opt/searxng/` для prod smoke
+- Per-file-ignores в `pyproject.toml` (current v0.8.1.3):
+  - `tests/*` = `["S101", "S105", "S106", "S108", "E402"]` (shrunk from blanket `["S", "B", "E402"]`)
+  - `scripts/e2e_*.py` = `["S108"]` (для `/tmp` smoke traces)
+  - 3× `src/*.py` (`hermes_*.py`, `llm_verifier.py`) = `["S310"]` (S310 false-positive validated by `tests/test_url_safety.py`)
+
+**Результат:** 207 → 0 errors. `ruff check src tests scripts` = clean. CI green на `72f8b16` (run `27198068324`).
+
+**Acceptance:** reviewer (ChatGPT audit 2026-06-09) подтвердил, что per-file-ignores в `pyproject.toml` + ISSUES.md L37 синхронизированы.
 
 ### #011 — test suite not portable [DONE | 2026-06-06]
 

@@ -1,9 +1,10 @@
 # Release Notes — v0.8.1.2
 
 **Date:** 9 June 2026
-**Tag:** `v0.8.1.2` → `b84de39`
+**Tag:** `v0.8.1.2` → `b84de39` (release commit)
+**Follow-up on main:** `76f498b` adds v0.8.1.2 follow-up (pyproject version, ISSUES #008, AGENTS entrypoint, eval docstring, tests ignore shrink). Tagged separately as `v0.8.1.3`.
 **Type:** Hygiene + CI fix release on top of v0.8.1.1
-**Diff vs v0.8.1.1:** 5 commits, no research logic change
+**Diff vs v0.8.1.1:** 5 commits in tag `v0.8.1.2` (b84de39), +1 follow-up on main (76f498b) → v0.8.1.3, no research logic change
 
 ---
 
@@ -33,8 +34,8 @@ Five commits:
 - 207 ruff errors → 0 (auto-fix + unsafe-fixes)
 - 22 files reformatted via `ruff format src scripts`
 - Per-file-ignores added in `pyproject.toml` with documented justification:
-  - `tests/*` = `["S101", "S106", "S108", "E402"]` (initially broader, shrunk in
-    follow-up commit per external review recommendation)
+  - `tests/*` = `["S101", "S105", "S106", "S108", "E402"]` (initially broader, shrunk in
+    follow-up commit per external review recommendation; S105 = test fixture dummy secrets)
   - `scripts/e2e_*.py` = `["S108"]` (intentional `/tmp` smoke trace dirs)
   - `src/hermes_deepresearch.py`, `src/hermes_searxng.py`, `src/llm_verifier.py`
     = `["S310"]` (SSRF guarded at function level by `_is_safe_fetch_url()` /

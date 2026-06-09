@@ -1,9 +1,9 @@
 # Release Notes — v0.8.1.4
 
 **Date:** 9 June 2026
-**Tag:** `v0.8.1.4` → `05e7554`
-**Type:** Pre-v0.8.2 bugfix (eval correctness)
-**Diff vs v0.8.1.3:** 1 commit on main (`05e7554`), no research logic change
+**Tag:** `v0.8.1.4` → `e36ee5e` (annotated tag, see `git tag -l 'v0.8.1.*'`)
+**Type:** Pre-v0.8.2 bugfix (eval correctness) + version/tag consistency
+**Diff vs v0.8.1.3:** 2 commits on main (`05e7554` + `e36ee5e`), no research logic change
 
 ---
 
@@ -17,11 +17,19 @@ contained the raw URL.
 
 **No new pipeline stages, no new providers, no new dependencies.**
 
-One commit:
+Two commits:
 
 | SHA | Title | Purpose |
 |---|---|---|
 | `05e7554` | fix(eval): v0.8.1.4 canonical-dedup regression | Split `seen` into `seen_raw` + `seen_canon`; dedup checks before `seen.add(...)`; 5 new regression tests |
+| `e36ee5e` | docs: v0.8.1.4 release notes + v0.8.1.3 consistency fix | `pyproject.toml` 0.8.1.3→0.8.1.4 (closes version drift); `RELEASE_NOTES_v0.8.1.3.md` updated to reflect actual 2-commit v0.8.1.3 scope; this file created |
+
+> **Note on tag target:** Earlier draft of this file (created during
+> commit `e36ee5e`) referenced `05e7554` as the tag target. That was
+> wrong: the version bump in `pyproject.toml` only landed in `e36ee5e`,
+> so a tag at `05e7554` would point to a commit that still claims
+> `0.8.1.3`. The canonical tag target is `e36ee5e`. This drift is what
+> the third external review caught in section 2.
 
 ---
 

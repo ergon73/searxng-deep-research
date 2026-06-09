@@ -5,7 +5,7 @@ Project rules for any coding agent (Hermes/OpenClaw/Claude Code/Codex) working o
 ## Project
 
 - **Name**: searxng-deep-research
-- **Version**: v0.8.1.2 (9 June 2026)
+- **Version**: v0.8.1.4 (9 June 2026)
 - **Purpose**: Local SearXNG-based research fetcher + 4-level verification + optional LLM cross-check
 - **Stack**: Python 3.11+, SearXNG (Docker), Valkey, OpenRouter LLM
 - **Location**: /opt/searxng/
@@ -79,8 +79,10 @@ cd /opt/searxng && python3 -m ruff check src/
 # Format check
 cd /opt/searxng && python3 -m ruff format --check src/
 
-# Smoke test of the whole pipeline
-cd /opt/searxng && python3 -c "import sys; sys.path.insert(0, 'src'); from hermes_deepresearch import deep_research; print(deep_research('test query', top_n=1)['top1']['title'])"
+# Smoke test of the whole pipeline (uses v0.8.0+ recommended entrypoint)
+cd /opt/searxng && PYTHONPATH=src python3 -c "from research_runner import run_research; out = run_research('test query', approved_plan=True, max_iterations=1, use_llm=False); print(out.status)"
+# Legacy smoke (strangler, not modified) — kept for backward compatibility:
+# cd /opt/searxng && python3 -c "import sys; sys.path.insert(0, 'src'); from hermes_deepresearch import deep_research; print(deep_research('test query', top_n=1)['top1']['title'])"
 ```
 
 ## Security requirements (hard rules)
@@ -133,7 +135,18 @@ cd /opt/searxng && python3 -c "import sys; sys.path.insert(0, 'src'); from herme
 
 ## Common tasks
 
-### Run research
+### Run research (recommended — v0.8.0+)
+```python
+import sys
+sys.path.insert(0, "/opt/searxng/src")
+from research_runner import run_research
+
+# approved_plan=True skips the interactive confirmation gate
+out = run_research("query here", approved_plan=True, max_iterations=3, use_llm=False)
+print(out.status, out.synthesis)  # ResearchResult dataclass
+```
+
+### Run research (legacy — backward compat only)
 ```python
 import sys
 sys.path.insert(0, "/opt/searxng/src")

@@ -34,14 +34,14 @@ jobs:
           ruff check src tests scripts
 
       - name: Pytest
+        env:
+          OPENROUTER_API_KEY: not_a_real_key_dummy_for_ci
         run: |
-          # Create dummy .env_llm in TWO locations:
+          # Create dummy .env_llm in TWO locations (real secrets never live in CI cache):
           #   - /opt/searxng/.env_llm: read by src/llm_verifier.py::_load_api_key
-          #     (hardcoded production path). Used by tests/test_llm_verifier.py.
           #   - $GITHUB_WORKSPACE/.env_llm: read by tests/test_compose_config.py::TestEnvLlm
-          #     (test asserts file exists in repo root, mode 0600, contains SEARXNG_SECRET).
-          # Real secrets never live in CI cache; placeholders are obvious dummies.
           mkdir -p /opt/searxng
-          printf 'LLM_API_KEY=*** MODEL=meta-llama/llama-3.1-8b-instruct:free\nSEARXNG_SECRET=ci_pla...\n' | tee /opt/searxng/.env_llm .env_llm > /dev/null
+          python -c "open('/opt/searxng/.env_llm', 'w').write('LLM_API_KEY=dummy_for_ci_only\nLLM_MODEL=meta-llama/llama-3.1-8b-instruct:free\nSEARXNG_SECRET=dummy_for_ci_only\n')"
+          cp /opt/searxng/.env_llm .env_llm
           chmod 600 /opt/searxng/.env_llm .env_llm
-          export OPENROUTER_API_KEY=*** PYTHONPATH=src python -m pytest -q
+          PYTHONPATH=src python -m pytest -q

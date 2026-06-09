@@ -184,7 +184,14 @@ def _run_online_pipeline(result: QueryResult) -> None:
     # 2. FETCH top-N
     result.stage = "fetch"
     sources: list[dict] = []
-    seen: set[str] = set()
+    # v0.8.1.4: separate raw vs canonical dedup sets. Previously a single
+    # `seen` set was used, but `seen.add(url)` happened BEFORE the canonical
+    # check, so any URL where `canonical_url(url) == url` (the common case
+    # for URLs without utm_*) was incorrectly skipped as a duplicate. The
+    # fetch loop never executed for normal URLs. (Bug reported by external
+    # review 2026-06-09.)
+    seen_raw: set[str] = set()
+    seen_canon: set[str] = set()
 
     # v0.8.3: URL quality filter — skip navigation/portal pages, social media,
     # and Wikimedia category listings. These never contain claim-level facts.
@@ -205,23 +212,23 @@ def _run_online_pipeline(result: QueryResult) -> None:
     for r in search_results:
         url = r.get("url", "")
         result.urls_total += 1
-        if not url or url in seen:
+        if not url or url in seen_raw:
             result.urls_skipped_duplicate += 1
             continue
         # Apply URL quality filter
         if any(pat in url for pat in _URL_DENY_PATTERNS):
             result.urls_skipped_deny_pattern += 1
             continue
-        seen.add(url)
         try:
             canon = canonical_url(url)
-            if canon in seen:
-                result.urls_skipped_duplicate += 1
-                continue
-            seen.add(canon)
         except Exception:  # noqa: S110  (unparseable URL → skip silently, intentional)
             result.urls_skipped_canonical += 1
-            pass
+            continue
+        if canon in seen_canon:
+            result.urls_skipped_duplicate += 1
+            continue
+        seen_raw.add(url)
+        seen_canon.add(canon)
         try:
             content = fetch_url(
                 url,

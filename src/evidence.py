@@ -18,11 +18,11 @@ Design principles:
   highlight quotes or cross-check).
 - Idempotent: extracting twice yields the same windows.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-
 
 # ====================================================================
 # Constants
@@ -54,6 +54,7 @@ _WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9]+")
 # Data model
 # ====================================================================
 
+
 @dataclass
 class EvidenceWindow:
     """A quote window extracted from a source text.
@@ -71,6 +72,7 @@ class EvidenceWindow:
         source_title: Human-readable title of the source. Empty if unknown.
         score: Source-level score (e.g. SearXNG ranking) carried through.
     """
+
     text: str
     offset_start: int
     offset_end: int
@@ -98,6 +100,7 @@ class EvidenceWindow:
 # ====================================================================
 # Tokenisation
 # ====================================================================
+
 
 def _tokenize(s: str) -> list[str]:
     """Tokenize a string into lowercase word tokens."""
@@ -146,6 +149,7 @@ def _find_term_positions(text_lower: str, term: str) -> list[int]:
 # ====================================================================
 # Window extraction
 # ====================================================================
+
 
 def extract_windows(
     text: str,
@@ -216,20 +220,19 @@ def extract_windows(
             if abs(pos - cluster["center"]) <= ws:
                 cluster["positions"].append((pos, term))
                 cluster["terms"].add(term)
-                cluster["center"] = (
-                    sum(p for p, _ in cluster["positions"])
-                    / len(cluster["positions"])
-                )
+                cluster["center"] = sum(p for p, _ in cluster["positions"]) / len(cluster["positions"])
                 cluster["score"] = len(cluster["terms"]) / len(terms)
                 placed = True
                 break
         if not placed:
-            clusters.append({
-                "positions": [(pos, term)],
-                "terms": {term},
-                "center": float(pos),
-                "score": 1.0 / len(terms),
-            })
+            clusters.append(
+                {
+                    "positions": [(pos, term)],
+                    "terms": {term},
+                    "center": float(pos),
+                    "score": 1.0 / len(terms),
+                }
+            )
 
     # Sort by score desc, then by cluster center (earlier first)
     clusters.sort(key=lambda c: (-c["score"], c["center"]))
@@ -242,12 +245,12 @@ def extract_windows(
         end = min(len(text), center + ws)
         # Adjust start to word boundary if possible
         if start > 0:
-            m = re.search(r"\s", text[start:start + 30])
+            m = re.search(r"\s", text[start : start + 30])
             if m:
                 start = start + m.end()
         # Adjust end to word boundary
         if end < len(text):
-            m = re.search(r"\s\S*$", text[max(0, end - 30):end])
+            m = re.search(r"\s\S*$", text[max(0, end - 30) : end])
             if m:
                 end = end - len(m.group(0))
 
@@ -256,13 +259,15 @@ def extract_windows(
         suffix = "..." if end < len(text) else ""
         win_text = prefix + text[start:end].strip() + suffix
 
-        windows.append(EvidenceWindow(
-            text=win_text,
-            offset_start=start,
-            offset_end=end,
-            match_terms=sorted(cluster["terms"]),
-            match_score=cluster["score"],
-        ))
+        windows.append(
+            EvidenceWindow(
+                text=win_text,
+                offset_start=start,
+                offset_end=end,
+                match_terms=sorted(cluster["terms"]),
+                match_score=cluster["score"],
+            )
+        )
 
     if not windows or windows[0].match_score < MIN_MATCH_SCORE:
         # Best match is weak: prepend a fallback window at the start
@@ -270,7 +275,7 @@ def extract_windows(
         fb = _make_fallback_window(text, ws)
         if not windows:
             return [fb]
-        return [fb] + windows[:mw - 1]
+        return [fb] + windows[: mw - 1]
 
     return windows
 
@@ -280,7 +285,7 @@ def _make_fallback_window(text: str, window_size: int) -> EvidenceWindow:
     end = min(len(text), window_size)
     # Try to end at a word boundary
     if end < len(text):
-        m = re.search(r"\s\S*$", text[max(0, end - 30):end])
+        m = re.search(r"\s\S*$", text[max(0, end - 30) : end])
         if m:
             end = end - len(m.group(0))
     return EvidenceWindow(
@@ -295,6 +300,7 @@ def _make_fallback_window(text: str, window_size: int) -> EvidenceWindow:
 # ====================================================================
 # Public helper: build a single text blob from windows
 # ====================================================================
+
 
 def windows_to_blob(
     windows: list[EvidenceWindow],

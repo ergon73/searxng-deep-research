@@ -9,12 +9,12 @@ SearXNG сам ходит во внешние движки через per-engine
     from hermes_searxng import web_search, news_search
     hits = web_search("БПЛА Москва", time_range="day")
 """
-import urllib.request
-import urllib.parse
+
 import json
 import ssl
 import time
-from typing import Optional
+import urllib.parse
+import urllib.request
 
 BASE = "http://127.0.0.1:8888"
 UA = "hermes-bot/1.0 (+local searxng)"
@@ -27,9 +27,9 @@ def web_search(
     query: str,
     *,
     lang: str = "ru",
-    time_range: Optional[str] = None,  # day | week | month | year
-    engines: Optional[str] = None,     # "google,bing,yandex"
-    categories: Optional[str] = None,  # "general,news,science"
+    time_range: str | None = None,  # day | week | month | year
+    engines: str | None = None,  # "google,bing,yandex"
+    categories: str | None = None,  # "general,news,science"
     max_results: int = 10,
     timeout: float = 15.0,
     retries: int = 1,
@@ -68,12 +68,14 @@ def web_search(
 
     out = []
     for r in last:
-        out.append({
-            "engine": r.get("engine"),
-            "title": r.get("title", ""),
-            "url": r.get("url", ""),
-            "snippet": r.get("content", ""),
-        })
+        out.append(
+            {
+                "engine": r.get("engine"),
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+            }
+        )
     return out
 
 

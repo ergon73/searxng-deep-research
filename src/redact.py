@@ -24,14 +24,14 @@ Hard rules (from audit):
 - Redact all keys before chat output.
 - Before archive: scan for sk-, token, secret, password, proxy credentials.
 """
+
 from __future__ import annotations
 
 import json
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
-
 
 # ====================================================================
 # Recognized secret prefixes
@@ -50,15 +50,15 @@ _PREFIX_PATTERNS: list[tuple[str, bool]] = [
     ("sk-or-v1-", True),
     ("sk-or-", True),
     # OpenAI
-    ("sk-", True),                # broad: sk-proj-, sk-svcacct-, sk-...
+    ("sk-", True),  # broad: sk-proj-, sk-svcacct-, sk-...
     # Anthropic
     ("sk-ant-", True),
     # GitHub
-    ("ghp_", True),               # personal access token
-    ("gho_", True),               # OAuth
-    ("ghu_", True),               # user-to-server
-    ("ghs_", True),               # server-to-server
-    ("ghr_", True),               # refresh
+    ("ghp_", True),  # personal access token
+    ("gho_", True),  # OAuth
+    ("ghu_", True),  # user-to-server
+    ("ghs_", True),  # server-to-server
+    ("ghr_", True),  # refresh
     # Google API keys (broad)
     ("AIza", True),
     # Telegram bot token (always starts with digits, contains ':' separator)
@@ -89,8 +89,8 @@ _PREFIX_PATTERNS: list[tuple[str, bool]] = [
 #   SEARXNG_SECRET: 'abc123'   (YAML-like — also matches)
 #
 # We match the key first, then the value (until end of line / quote / space).
-_SECRET_KEY_NAMES = (
-    r"(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|"
+_SECRET_KEY_NAME_PATTERNS = (
+    r"(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|"  # noqa: S105  (regex patterns, not credentials)
     r"PRIVATE[_-]?KEY|ACCESS[_-]?KEY|CLIENT[_-]?SECRET|"
     r"MTPROTO[_-]?SECRET|MTSecret|SECRET[_-]?KEY)"
 )
@@ -99,7 +99,7 @@ _SECRET_KEY_NAMES = (
 # so we use a non-capturing optional suffix group after the secret marker.
 _ENV_SECRET_RE = re.compile(
     r"(?P<key>(?P<envname>[A-Z_][A-Z0-9_]*)"
-    r"(?:_|\.)?" + _SECRET_KEY_NAMES + r"(?:_[A-Z0-9_]+)?)"
+    r"(?:_|\.)?" + _SECRET_KEY_NAME_PATTERNS + r"(?:_[A-Z0-9_]+)?)"
     r"\s*[:=]\s*"
     r"(?:"  # optional quote
     r"\"(?P<dqval>[^\"\n]*)\""
@@ -144,6 +144,7 @@ _LITERAL_PREFIX_RE = re.compile(
 # Helpers
 # ====================================================================
 
+
 def _redact_value(value: str) -> str:
     """Return a redacted representation of a value, preserving prefix + last 4.
 
@@ -178,8 +179,15 @@ def _has_secret_key_name(name: str) -> bool:
     # Split by underscore and look for any secret-y token
     parts = set(n.split("_"))
     secret_markers = {
-        "KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASS",
-        "PRIVATE", "CREDENTIAL", "AUTH",
+        "KEY",
+        "SECRET",
+        "TOKEN",
+        "PASSWORD",
+        "PASSWD",
+        "PASS",
+        "PRIVATE",
+        "CREDENTIAL",
+        "AUTH",
     }
     return bool(parts & secret_markers)
 
@@ -200,6 +208,7 @@ def _looks_like_url_creds(scheme: str) -> bool:
 # ====================================================================
 # Public API
 # ====================================================================
+
 
 def redact_secrets(text: str) -> str:
     """Redact all recognized secrets in a text string.
@@ -335,15 +344,16 @@ def _count_redactions(path: Path) -> int:
 # CLI
 # ====================================================================
 
+
 def _main(argv: list[str]) -> int:
     import argparse
+
     p = argparse.ArgumentParser(
         prog="redact",
         description="Redact secrets from a file or stdin. Output goes to stdout.",
     )
     p.add_argument("file", nargs="?", help="File to redact (default: stdin)")
-    p.add_argument("--json", action="store_true",
-                   help="Parse input as JSON, redact values, output JSON")
+    p.add_argument("--json", action="store_true", help="Parse input as JSON, redact values, output JSON")
     args = p.parse_args(argv)
 
     if args.file:
@@ -353,7 +363,7 @@ def _main(argv: list[str]) -> int:
 
     if args.json:
         try:
-            obj = json.loads(out)
+            json.loads(out)
             redacted = json.loads(redact_secrets(out))
             print(json.dumps(redacted, ensure_ascii=False, indent=2))
         except json.JSONDecodeError as e:

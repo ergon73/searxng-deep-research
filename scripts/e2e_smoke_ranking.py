@@ -21,6 +21,7 @@ What we verify:
 Usage:
   PYTHONPATH=src python3 scripts/e2e_smoke_ranking.py
 """
+
 from __future__ import annotations
 
 import json
@@ -54,7 +55,7 @@ SYNTHETIC_HITS = [
         "url": "https://apple.com/about",
         "title": "Apple - Official Site",
         "content": "Apple was founded in 1976 by Steve Jobs, Steve Wozniak, and Ronald Wayne. "
-                   "The company is headquartered in Cupertino, California. " * 20,
+        "The company is headquartered in Cupertino, California. " * 20,
         "engine": "wikipedia",
     },
 ]
@@ -80,7 +81,7 @@ SYNTHETIC_FETCH_RESULTS = {
         "url": "https://apple.com/about",
         "title": "Apple - Official Site",
         "text": "Apple was founded in 1976 by Steve Jobs, Steve Wozniak, and Ronald Wayne. "
-                "The company is headquartered in Cupertino, California. " * 20,
+        "The company is headquartered in Cupertino, California. " * 20,
         "length": 1380,
         "error": None,
     },
@@ -89,9 +90,10 @@ SYNTHETIC_FETCH_RESULTS = {
 
 # --- E2E pipeline setup -------------------------------------------------
 
+
 def _run_e2e(query: str = "Apple founding year") -> dict:
     """Run run_research() with monkeypatched network. Return state.documents."""
-    from research_runner import run_research, _dispatch_search_task, _fetch_documents
+    from research_runner import _dispatch_search_task, _fetch_documents, run_research
 
     # Save original functions to restore after.
     orig_dispatch = _dispatch_search_task
@@ -103,14 +105,17 @@ def _run_e2e(query: str = "Apple founding year") -> dict:
     def fake_fetch(urls, *, max_chars=4000):
         out = []
         for u in urls:
-            out.append(SYNTHETIC_FETCH_RESULTS.get(
-                u,
-                {"url": u, "title": "", "text": "", "length": 0, "error": "not in fixtures"},
-            ))
+            out.append(
+                SYNTHETIC_FETCH_RESULTS.get(
+                    u,
+                    {"url": u, "title": "", "text": "", "length": 0, "error": "not in fixtures"},
+                )
+            )
         return out
 
     # Patch.
     import research_runner
+
     research_runner._dispatch_search_task = fake_dispatch
     research_runner._fetch_documents = fake_fetch
 
@@ -131,6 +136,7 @@ def _run_e2e(query: str = "Apple founding year") -> dict:
 
 
 # --- Main ---------------------------------------------------------------
+
 
 def main() -> int:
     t0 = time.time()
@@ -179,10 +185,7 @@ def main() -> int:
     # 3. Documents are in descending source_score order.
     scores = [d.get("source_score", 0) for d in out["documents"]]
     if scores != sorted(scores, reverse=True):
-        failures.append(
-            f"NOT_SORTED_DESC: scores in pipeline order are {scores}, "
-            f"expected descending"
-        )
+        failures.append(f"NOT_SORTED_DESC: scores in pipeline order are {scores}, expected descending")
 
     # 4. The error document (timeout) is at the bottom (score = 0).
     if out["n_documents"] >= 2:

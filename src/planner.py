@@ -21,6 +21,7 @@ Design notes:
 
 Spec: ~/.hermes/plans/ISSUES.md #017.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,7 +30,6 @@ from typing import Any
 from models import ResearchState, SearchTask
 from query_adaptation import adapt_query
 from routing import classify_intent, should_warn_about_routing
-
 
 # Routes for which we add falsification tasks. These are the routes where
 # opposite-evidence (criticism / debunk / опровержение) is most useful:
@@ -68,9 +68,10 @@ class ResearchPlan:
         confirmation_reasons: list of human-readable reasons (from adapted
                               and/or intent).
     """
+
     original_query: str
     adapted: dict[str, Any]
-    intent: Any                              # routing.Intent — avoid circular import
+    intent: Any  # routing.Intent — avoid circular import
     search_tasks: list[SearchTask]
     needs_confirmation: bool
     confirmation_reasons: list[str] = field(default_factory=list)
@@ -99,7 +100,7 @@ def _falsification_query_for(base_query: str, route: str) -> str:
     diversify across plans (purely deterministic — no LLM)."""
     # Hash the query+route to a stable index. No randomness; tests must be
     # deterministic.
-    idx = (hash((base_query, route)) % len(_FALSIFICATION_TERMS))
+    idx = hash((base_query, route)) % len(_FALSIFICATION_TERMS)
     return f"{base_query}{_FALSIFICATION_TERMS[idx]}"
 
 
@@ -150,60 +151,68 @@ def build_research_plan(query: str) -> ResearchPlan:
     tasks: list[SearchTask] = []
 
     if main_query:
-        tasks.append(SearchTask(
-            query=main_query,
-            route=route,
-            language=language,
-            engines=engines,
-            categories=categories,
-            time_range=time_range,
-            priority=100,
-            rationale="main adapted query (from adapt_query)",
-        ))
+        tasks.append(
+            SearchTask(
+                query=main_query,
+                route=route,
+                language=language,
+                engines=engines,
+                categories=categories,
+                time_range=time_range,
+                priority=100,
+                rationale="main adapted query (from adapt_query)",
+            )
+        )
 
     for alt in alt_queries:
         alt = alt.strip()
         if not alt:
             continue
-        tasks.append(SearchTask(
-            query=alt,
-            route=route,
-            language=language,
-            engines=engines,
-            categories=categories,
-            time_range=time_range,
-            priority=80,
-            rationale="alt query (orthogonal angle from adapt_query)",
-        ))
+        tasks.append(
+            SearchTask(
+                query=alt,
+                route=route,
+                language=language,
+                engines=engines,
+                categories=categories,
+                time_range=time_range,
+                priority=80,
+                rationale="alt query (orthogonal angle from adapt_query)",
+            )
+        )
 
     for variant in query_variants:
         variant = variant.strip()
         if not variant:
             continue
-        tasks.append(SearchTask(
-            query=variant,
-            route=route,
-            language=language,
-            engines=engines,
-            categories=categories,
-            time_range=time_range,
-            priority=70,
-            rationale="route-specific variant (from classify_intent)",
-        ))
+        tasks.append(
+            SearchTask(
+                query=variant,
+                route=route,
+                language=language,
+                engines=engines,
+                categories=categories,
+                time_range=time_range,
+                priority=70,
+                rationale="route-specific variant (from classify_intent)",
+            )
+        )
 
     # 5. Falsification: only for routes where opposite-evidence is useful.
     if route in _FALSIFICATION_ROUTES and main_query:
         fals_q = _falsification_query_for(main_query, route)
-        tasks.append(SearchTask(
-            query=fals_q,
-            route=route,
-            language=language,
-            engines=engines,
-            categories=categories,
-            time_range=time_range,
-            priority=40,
-            rationale=f"falsification for route={route} (criticism/опровержение)",
-        ))
+        tasks.append(
+            SearchTask(
+                query=fals_q,
+                route=route,
+                language=language,
+                engines=engines,
+                categories=categories,
+                time_range=time_range,
+                priority=40,
+                rationale=f"falsification for route={route} (criticism/опровержение)",
+            )
+        )
 
     # 6. Confirmation gate: True if EITHER side asks for it. Reasons are
     #    merged so the runner can show the user the full picture.

@@ -35,11 +35,10 @@ Public API:
     rank_documents(documents, query) -> list[dict]   # sorted desc by score
     select_top_n(documents, query, n) -> list[dict]  # top-N (or fewer)
 """
+
 from __future__ import annotations
 
 import re
-from typing import Optional
-
 
 # Minimum extracted text length to consider a document "real content".
 # 500 chars ≈ one paragraph — enough to extract at least one fact.
@@ -48,6 +47,7 @@ MIN_CONTENT_CHARS = 500
 # Saturation point for length_score. Documents longer than this don't
 # get a bigger length bonus (the marginal info gain flattens off).
 LENGTH_SATURATION = 4000
+
 
 # Position score formula: 1 / (1 + idx). At idx=0 → 1.0; idx=1 → 0.5;
 # idx=2 → 0.33; idx=10 → 0.09. Steep early drop so a top-1 result
@@ -121,7 +121,7 @@ def _noise_penalty(text: str) -> float:
 
 def compute_source_score(
     doc: dict,
-    query_terms: Optional[list[str]] = None,
+    query_terms: list[str] | None = None,
     *,
     original_index: int = 0,
 ) -> float:

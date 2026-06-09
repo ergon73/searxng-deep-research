@@ -13,27 +13,22 @@ e2e_smoke_llm.py — минимальный smoke test новой model chain (q
 
 Запуск: PYTHONPATH=src python3 scripts/e2e_smoke_llm.py
 """
+
 import json
-import os
 import sys
 import time
-import socket
-import urllib.request
-import urllib.error
 from pathlib import Path
 
 # Ensure imports — portable: derive src/ from this file's location, not /opt/searxng
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from llm_verifier import (
-    LLMVerifier,
+    _FALLBACK_STATUS_CODES,
     DEFAULT_MODEL,
     DEFAULT_MODEL_CHAIN,
-    _FALLBACK_STATUS_CODES,
+    LLMVerifier,
     _load_api_key,
-    RESPONSE_SCHEMA,
 )
-
 
 # =========================================================================
 # Smoke test cases — 3 коротких fact-vs-evidence кейса
@@ -44,28 +39,34 @@ SMOKE_CASES = [
         "name": "SUPPORTS (smoking kills, evidence: smoking causes cancer)",
         "fact": "smoking causes cancer",
         "evidence": [
-            {"url": "https://en.wikipedia.org/wiki/Tobacco_and_cancer",
-             "text": "Tobacco smoking is the leading preventable cause of cancer. "
-                     "Cigarette smoke contains carcinogens that cause lung, throat, "
-                     "and other cancers. The WHO classifies smoking as a Group 1 carcinogen."},
+            {
+                "url": "https://en.wikipedia.org/wiki/Tobacco_and_cancer",
+                "text": "Tobacco smoking is the leading preventable cause of cancer. "
+                "Cigarette smoke contains carcinogens that cause lung, throat, "
+                "and other cancers. The WHO classifies smoking as a Group 1 carcinogen.",
+            },
         ],
     },
     {
         "name": "REFUTES (water boils at 100C, evidence: boils at 50C)",
         "fact": "water boils at 100 degrees Celsius at sea level",
         "evidence": [
-            {"url": "https://example.com/flat-earth-wrong",
-             "text": "According to the Flat Earth Society, water boils at exactly 50°C. "
-                     "This is the official temperature. All other sources are wrong."},
+            {
+                "url": "https://example.com/flat-earth-wrong",
+                "text": "According to the Flat Earth Society, water boils at exactly 50°C. "
+                "This is the official temperature. All other sources are wrong.",
+            },
         ],
     },
     {
         "name": "INSUFFICIENT (fact about topic not in evidence)",
         "fact": "the speed of light in a vacuum is 299792458 m/s",
         "evidence": [
-            {"url": "https://example.com/recipe",
-             "text": "Here's a recipe for chocolate cake. You need flour, sugar, eggs. "
-                     "Mix them together and bake at 180 degrees for 30 minutes."},
+            {
+                "url": "https://example.com/recipe",
+                "text": "Here's a recipe for chocolate cake. You need flour, sugar, eggs. "
+                "Mix them together and bake at 180 degrees for 30 minutes.",
+            },
         ],
     },
 ]
@@ -116,7 +117,7 @@ def main() -> int:
 
     # 3. Init verifier (no explicit model → uses chain)
     v = LLMVerifier()
-    print(f"\n[setup] Verifier initialized:")
+    print("\n[setup] Verifier initialized:")
     print(f"  primary: {v.model_chain[0]}")
     print(f"  current: {v.model}")
     print(f"  chain length: {len(v.model_chain)}")
@@ -133,10 +134,12 @@ def main() -> int:
         r = run_one(v, case)
         results.append(r)
         status = "✓" if not r["llm_error"] else "✗"
-        print(f"  {status} verdict={r['verdict']} | "
-              f"verified={r['verified']} | "
-              f"elapsed={r['elapsed_sec']}s | "
-              f"model={r['model_used']}")
+        print(
+            f"  {status} verdict={r['verdict']} | "
+            f"verified={r['verified']} | "
+            f"elapsed={r['elapsed_sec']}s | "
+            f"model={r['model_used']}"
+        )
         if r["llm_error"]:
             print(f"  ✗ error: {r['llm_error'][:100]}")
         else:
@@ -158,7 +161,7 @@ def main() -> int:
 
     print(f"Cases passed (no error): {ok}/{total}")
     print(f"Expected verdicts match: {correct_expected}/3")
-    print(f"Total time: {total_time}s (avg {total_time/total:.1f}s per case)")
+    print(f"Total time: {total_time}s (avg {total_time / total:.1f}s per case)")
     print(f"Models used: {sorted(models_used) if models_used else 'NONE (all failed)'}")
 
     # 6. Save trace

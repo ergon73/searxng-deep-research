@@ -14,28 +14,39 @@ Best practices:
 - Confidence score per source (length + has_keyword + status)
 - "Honest don't know": пустой результат возвращается явно, без мусора
 """
-import urllib.request
-import urllib.parse
+
+import concurrent.futures
 import json
+import re
 import ssl
 import time
-import re
-import concurrent.futures
+import urllib.parse
+import urllib.request
+
 import trafilatura
-from typing import Optional
-from rapidfuzz import fuzz
 
 # Импортируем существующие helpers. Требует PYTHONPATH=/opt/searxng
 # или запуска из /opt/searxng. Hardcoded sys.path удалён — это плохая практика
 # (см. DR-05062026(2).txt P0 #hardcoded-syspath).
 from hermes_searxng import web_search
 from llm_verifier import LLMVerifier
+from rapidfuzz import fuzz
 
 # === Canonical URL (v0.8) ===
 
 TRACKING_PARAMS = {
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "fbclid", "gclid", "yclid", "mc_cid", "mc_eid", "ref", "ref_src",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "yclid",
+    "mc_cid",
+    "mc_eid",
+    "ref",
+    "ref_src",
 }
 
 
@@ -48,7 +59,8 @@ def canonical_url(url: str) -> str:
     - strip fragment
     - path: rstrip trailing / (кроме корня)
     """
-    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
     p = urlsplit(url.strip())
     scheme = p.scheme.lower()
     netloc = p.netloc.lower()
@@ -56,11 +68,9 @@ def canonical_url(url: str) -> str:
         netloc = netloc[:-3]
     if netloc.endswith(":443") and scheme == "https":
         netloc = netloc[:-4]
-    query = urlencode([
-        (k, v)
-        for k, v in parse_qsl(p.query, keep_blank_values=True)
-        if k.lower() not in TRACKING_PARAMS
-    ])
+    query = urlencode(
+        [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k.lower() not in TRACKING_PARAMS]
+    )
     path = p.path or "/"
     if path != "/":
         path = path.rstrip("/")
@@ -70,14 +80,22 @@ def canonical_url(url: str) -> str:
 # === Search-result ranking (v0.8) ===
 
 ENGINE_WEIGHT = {
-    "wikipedia": 0.85, "wikidata": 0.80,
-    "bing": 0.75, "bing news": 0.85,
-    "duckduckgo": 0.70, "duckduckgo news": 0.85,
-    "github": 0.85, "stackoverflow": 0.80,
+    "wikipedia": 0.85,
+    "wikidata": 0.80,
+    "bing": 0.75,
+    "bing news": 0.85,
+    "duckduckgo": 0.70,
+    "duckduckgo news": 0.85,
+    "github": 0.85,
+    "stackoverflow": 0.80,
     "semantic scholar": 0.90,
-    "arxiv": 0.85, "mojeek": 0.65, "presearch": 0.55,
-    "brave": 0.70, "brave news": 0.80,
-    "google": 0.75, "google news": 0.85,
+    "arxiv": 0.85,
+    "mojeek": 0.65,
+    "presearch": 0.55,
+    "brave": 0.70,
+    "brave news": 0.80,
+    "google": 0.75,
+    "google news": 0.85,
 }
 
 
@@ -101,15 +119,16 @@ def _search_result_score(r: dict, query_terms: list[str]) -> float:
 
     return 0.45 * rank_score + 0.35 * coverage + 0.20 * engine_score
 
+
 UA_FETCH = "hermes-research/1.0 (+local SearXNG)"
 TIMEOUT = 12.0
-MAX_CONTENT_CHARS = 8000      # ~2к токенов на источник
-MAX_CONCURRENT_FETCH = 6      # параллельных запросов
-MAX_FETCH_BYTES = 2_000_000   # 2 МБ cap per response
+MAX_CONTENT_CHARS = 8000  # ~2к токенов на источник
+MAX_CONCURRENT_FETCH = 6  # параллельных запросов
+MAX_FETCH_BYTES = 2_000_000  # 2 МБ cap per response
 
 # Verification tuning
-FUZZY_THRESHOLD = 75          # % similarity для fuzzy match
-LLM_VERIFY_THRESHOLD = 0.7    # если verification_rate < 70% → подключаем LLM
+FUZZY_THRESHOLD = 75  # % similarity для fuzzy match
+LLM_VERIFY_THRESHOLD = 0.7  # если verification_rate < 70% → подключаем LLM
 SYNONYM_DICT = {
     # Технические / частотные пары
     "append": {"add", "push", "insert"},
@@ -144,9 +163,10 @@ def _is_safe_fetch_url(url: str) -> bool:
     - 100.64.0.0/10 (CGNAT)
     - 0.0.0.0, multicast, reserved
     """
-    from urllib.parse import urlparse
     import ipaddress
     import socket
+    from urllib.parse import urlparse
+
     try:
         parsed = urlparse(url)
     except Exception:
@@ -179,6 +199,7 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     Перехватывает HTTP redirect'ы и блокирует те, что ведут на unsafe URL.
     Защита от SSRF через redirect-bypass: публичный URL → 169.254.169.254.
     """
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not _is_safe_fetch_url(newurl):
             raise urllib.error.URLError(f"blocked unsafe redirect: {newurl}")
@@ -197,7 +218,7 @@ def _safe_urlopen(req, *, timeout: float):
     return opener.open(req, timeout=timeout)
 
 
-def fetch_url(url: str, *, timeout: float = TIMEOUT, max_chars: int = MAX_CONTENT_CHARS) -> Optional[dict]:
+def fetch_url(url: str, *, timeout: float = TIMEOUT, max_chars: int = MAX_CONTENT_CHARS) -> dict | None:
     """
     Fetch URL and extract main content.
     Returns {url, title, text, length, fetch_dt, error} или None если совсем плохо.
@@ -205,17 +226,24 @@ def fetch_url(url: str, *, timeout: float = TIMEOUT, max_chars: int = MAX_CONTEN
     # SSRF guard
     if not _is_safe_fetch_url(url):
         return {
-            "url": url, "title": "", "text": "", "length": 0,
-            "fetch_dt": 0.0, "error": "blocked unsafe URL (SSRF guard)",
+            "url": url,
+            "title": "",
+            "text": "",
+            "length": 0,
+            "fetch_dt": 0.0,
+            "error": "blocked unsafe URL (SSRF guard)",
         }
 
     t0 = time.time()
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": UA_FETCH,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ru,en;q=0.7",
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": UA_FETCH,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "ru,en;q=0.7",
+            },
+        )
         with _safe_urlopen(req, timeout=timeout) as r:
             ct = r.headers.get("content-type", "")
             data = r.read(MAX_FETCH_BYTES + 1)
@@ -224,17 +252,29 @@ def fetch_url(url: str, *, timeout: float = TIMEOUT, max_chars: int = MAX_CONTEN
             final_url = r.geturl()
             # После возможных redirect'ов снова проверить final URL
             if not _is_safe_fetch_url(final_url):
-                return {"url": final_url, "title": "", "text": "", "length": 0,
-                        "fetch_dt": round(time.time() - t0, 2),
-                        "error": "blocked unsafe final URL (after redirect)"}
+                return {
+                    "url": final_url,
+                    "title": "",
+                    "text": "",
+                    "length": 0,
+                    "fetch_dt": round(time.time() - t0, 2),
+                    "error": "blocked unsafe final URL (after redirect)",
+                }
             if "html" not in ct and "xml" not in ct:
-                return {"url": final_url, "title": "", "text": "", "length": 0,
-                        "fetch_dt": round(time.time() - t0, 2), "error": f"non-html: {ct}"}
+                return {
+                    "url": final_url,
+                    "title": "",
+                    "text": "",
+                    "length": 0,
+                    "fetch_dt": round(time.time() - t0, 2),
+                    "error": f"non-html: {ct}",
+                }
 
         html_raw = data.decode("utf-8", errors="ignore")
 
         # Title из <title> (нужно в обоих ветках, не только fallback)
         from html import unescape
+
         m = re.search(r"<title[^>]*>([^<]+)</title>", html_raw)
         title = unescape(m.group(1)).strip() if m else ""
 
@@ -266,9 +306,14 @@ def fetch_url(url: str, *, timeout: float = TIMEOUT, max_chars: int = MAX_CONTEN
             "error": None,
         }
     except Exception as e:
-        return {"url": url, "title": "", "text": "", "length": 0,
-                "fetch_dt": round(time.time() - t0, 2),
-                "error": f"{type(e).__name__}: {e}"}
+        return {
+            "url": url,
+            "title": "",
+            "text": "",
+            "length": 0,
+            "fetch_dt": round(time.time() - t0, 2),
+            "error": f"{type(e).__name__}: {e}",
+        }
 
 
 def _confidence(result: dict, query_terms: list[str]) -> float:
@@ -296,7 +341,27 @@ def _confidence(result: dict, query_terms: list[str]) -> float:
 
 def _extract_query_terms(query: str) -> list[str]:
     """Выделяет значимые слова (>3 букв, не стоп-слова)."""
-    STOP = {"и", "в", "на", "с", "по", "о", "у", "для", "the", "a", "an", "in", "on", "of", "to", "is", "are", "was", "were"}
+    STOP = {
+        "и",
+        "в",
+        "на",
+        "с",
+        "по",
+        "о",
+        "у",
+        "для",
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "of",
+        "to",
+        "is",
+        "are",
+        "was",
+        "were",
+    }
     words = re.findall(r"\w{3,}", query.lower())
     return [w for w in words if w not in STOP]
 
@@ -304,16 +369,19 @@ def _extract_query_terms(query: str) -> list[str]:
 # === Fact extraction & 4-level verification (v0.7) ===
 
 # Паттерны: числа, даты, имена собственные (capitalized words), ключевые слова
-FACT_RE_NUM = re.compile(r"\b\d[\d\s.,]{0,15}\b")            # 123, 1 500, 12.5
+FACT_RE_NUM = re.compile(r"\b\d[\d\s.,]{0,15}\b")  # 123, 1 500, 12.5
 FACT_RE_DATE = re.compile(
     r"\b("
     r"\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}"
     r"|\d{4}-\d{2}-\d{2}"
     r"|\d{1,2}/\d{1,2}/\d{2,4}"
     r"|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}"
-    r")\b", re.IGNORECASE
+    r")\b",
+    re.IGNORECASE,
 )
-FACT_RE_CAPS = re.compile(r"\b[А-ЯЁ][а-яё]{2,}(?:\s+[А-ЯЁ][а-яё]{2,})*\b|\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*\b")
+FACT_RE_CAPS = re.compile(
+    r"\b[А-ЯЁ][а-яё]{2,}(?:\s+[А-ЯЁ][а-яё]{2,})*\b|\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*\b"
+)
 FACT_RE_NEG = re.compile(r"^(не|нет|без)\s+", re.IGNORECASE)
 
 # v0.8.2 (Phase 3): Multi-word entities.
@@ -322,9 +390,7 @@ FACT_RE_NEG = re.compile(r"^(не|нет|без)\s+", re.IGNORECASE)
 # NB: разрешаем non-capitalized продолжение, потому что в середине предложения
 # "обороны" после "Министерство" пишется со строчной. Стоимость: больше шума,
 # но stop-words + max_facts ограничивают.
-FACT_RE_ENTITY = re.compile(
-    r"\b[А-ЯЁA-Z][а-яёa-z]{2,}(?:\s+(?:[А-ЯЁA-Z]?[а-яёa-z]{2,})){1,3}\b"
-)
+FACT_RE_ENTITY = re.compile(r"\b[А-ЯЁA-Z][а-яёa-z]{2,}(?:\s+(?:[А-ЯЁA-Z]?[а-яёa-z]{2,})){1,3}\b")
 # Solo capitalized: v0.8.2 (Phase 3) — выключен по AC2 ("Министерство" одно не факт).
 # Оставлен как escape hatch на будущее, но не используется в _extract_facts.
 # Фильтрует "Python" (6), "Методы" (6), "Сегодня" (7), "Министерство" (12).
@@ -332,7 +398,7 @@ FACT_RE_ENTITY_SOLO = re.compile(r"(?!)")  # never matches
 
 
 def _extract_facts(text: str, max_facts: int = 8, query: str = "") -> list[str]:
-    """
+    r"""
     Извлекает ключевые факты из текста top-1 источника.
 
     Улучшенная версия (v0.7.2):
@@ -357,22 +423,85 @@ def _extract_facts(text: str, max_facts: int = 8, query: str = "") -> list[str]:
 
     # Стоп-слова для capitalized-фильтра (рус + англ обрывки)
     STOP_CAPS = {
-        "это", "что", "как", "или", "для", "при", "его", "её", "их", "этот", "эта", "эти",
-        "тот", "та", "те", "все", "весь", "однако", "также", "котор", "методы", "учимся",
-        "сегодня", "вчера", "сейчас", "теперь", "также",
-        "the", "and", "for", "with", "this", "that", "from", "into", "what", "how",
+        "это",
+        "что",
+        "как",
+        "или",
+        "для",
+        "при",
+        "его",
+        "её",
+        "их",
+        "этот",
+        "эта",
+        "эти",
+        "тот",
+        "та",
+        "те",
+        "все",
+        "весь",
+        "однако",
+        "также",
+        "котор",
+        "методы",
+        "учимся",
+        "сегодня",
+        "вчера",
+        "сейчас",
+        "теперь",
+        "the",
+        "and",
+        "for",
+        "with",
+        "this",
+        "that",
+        "from",
+        "into",
+        "what",
+        "how",
     }
 
     # Skip units: "123 item" — не факт, "1 год" — не самостоятельный факт
     # (включая plural и падежные формы)
     SKIP_NUM_UNITS = {
-        "год", "года", "году", "годом", "годы", "лет",
-        "item", "items", "line", "lines", "example", "examples",
-        "код", "кода", "коды", "пример", "примеры", "примеров",
-        "раз", "раза", "размер", "размера", "size", "sizes",
-        "pixel", "pixels", "px",
-        "msk", "мин", "минут", "сек", "секунд", "час", "часа", "часов",
-        "hours", "minutes", "seconds",
+        "год",
+        "года",
+        "году",
+        "годом",
+        "годы",
+        "лет",
+        "item",
+        "items",
+        "line",
+        "lines",
+        "example",
+        "examples",
+        "код",
+        "кода",
+        "коды",
+        "пример",
+        "примеры",
+        "примеров",
+        "раз",
+        "раза",
+        "размер",
+        "размера",
+        "size",
+        "sizes",
+        "pixel",
+        "pixels",
+        "px",
+        "msk",
+        "мин",
+        "минут",
+        "сек",
+        "секунд",
+        "час",
+        "часа",
+        "часов",
+        "hours",
+        "minutes",
+        "seconds",
     }
 
     facts = []
@@ -403,11 +532,10 @@ def _extract_facts(text: str, max_facts: int = 8, query: str = "") -> list[str]:
         seen.add(phrase)
         facts.append(phrase)
         return True
+
     # 1. Числа ТОЛЬКО в контексте существительного: "123 дрона", "5 июня 2026"
     #    num = 1-4 цифры (без вложенных пробелов, чтобы не ловить "2020 5 примеров")
-    fact_re_num_ctx = re.compile(
-        r"\b(\d{1,4})\s+([а-яёa-z]{3,})\b", re.IGNORECASE
-    )
+    fact_re_num_ctx = re.compile(r"\b(\d{1,4})\s+([а-яёa-z]{3,})\b", re.IGNORECASE)
     for m in fact_re_num_ctx.finditer(text):
         num = m.group(1).strip().rstrip(".,")
         word = m.group(2).lower()
@@ -481,10 +609,22 @@ def _extract_facts(text: str, max_facts: int = 8, query: str = "") -> list[str]:
 #   -2.0  if too short (< 2 words or len < 8) — fragment, not claim
 #   -1.0  if contains meta/nav words (Category, File, Upload, Block) — nav text
 #   -0.5  if starts with single digit word like "9" — likely from a list
-_NAV_WORDS = frozenset({
-    "category", "file", "upload", "version", "block", "subcategory",
-    "subcategories", "appearance", "flight", "current", "media", "wiki",
-})
+_NAV_WORDS = frozenset(
+    {
+        "category",
+        "file",
+        "upload",
+        "version",
+        "block",
+        "subcategory",
+        "subcategories",
+        "appearance",
+        "flight",
+        "current",
+        "media",
+        "wiki",
+    }
+)
 
 
 def _score_and_rank_facts(facts: list[str], query: str, max_facts: int) -> list[str]:
@@ -531,25 +671,51 @@ def _score_and_rank_facts(facts: list[str], query: str, max_facts: int) -> list[
 
 _TIME_KEYWORDS = {
     "day": [
-        "сегодня", "сейчас", "только что", "за сутки", "сегодняшний",
-        "today", "now", "latest", "breaking", "just now", "this hour",
+        "сегодня",
+        "сейчас",
+        "только что",
+        "за сутки",
+        "сегодняшний",
+        "today",
+        "now",
+        "latest",
+        "breaking",
+        "just now",
+        "this hour",
     ],
     "week": [
-        "вчера", "на этой неделе", "за неделю", "этой неделе",
-        "yesterday", "this week", "past week", "last week",
+        "вчера",
+        "на этой неделе",
+        "за неделю",
+        "этой неделе",
+        "yesterday",
+        "this week",
+        "past week",
+        "last week",
     ],
     "month": [
-        "в этом месяце", "за месяц", "этом месяце", "текущий месяц",
-        "this month", "past month", "last month",
+        "в этом месяце",
+        "за месяц",
+        "этом месяце",
+        "текущий месяц",
+        "this month",
+        "past month",
+        "last month",
     ],
     "year": [
-        "в этом году", "в прошлом году", "за год", "этом году", "прошлый год",
-        "this year", "last year", "past year",
+        "в этом году",
+        "в прошлом году",
+        "за год",
+        "этом году",
+        "прошлый год",
+        "this year",
+        "last year",
+        "past year",
     ],
 }
 
 
-def infer_time_range(query: str) -> Optional[str]:
+def infer_time_range(query: str) -> str | None:
     """
     Эвристический выбор time_range по ключевым словам в запросе.
     Returns: "day" | "week" | "month" | "year" | None
@@ -587,22 +753,54 @@ NUM_UNIT_RE = re.compile(r"\b(\d+)\s+([а-яёa-z]{3,})\b", re.IGNORECASE)
 # к одной форме, чтобы fuzzy / exact match сработали. НЕ полноценный стеммер.
 _MORPH_MAP = {
     # RU nouns (singular → stem)
-    "дрона": "дрон", "дронов": "дрон", "дроны": "дрон", "дроне": "дрон", "дрону": "дрон", "дроном": "дрон",
-    "беспилотника": "беспилотник", "беспилотников": "беспилотник", "беспилотники": "беспилотник",
+    "дрона": "дрон",
+    "дронов": "дрон",
+    "дроны": "дрон",
+    "дроне": "дрон",
+    "дрону": "дрон",
+    "дроном": "дрон",
+    "беспилотника": "беспилотник",
+    "беспилотников": "беспилотник",
+    "беспилотники": "беспилотник",
     "бпла": "бпла",
-    "сбито": "сбит", "сбиты": "сбит", "сбита": "сбит", "сбит": "сбит",
-    "обнаружено": "обнаруж", "обнаружены": "обнаруж", "обнаружена": "обнаруж", "обнаружен": "обнаруж",
-    "перехвачено": "перехвач", "перехвачены": "перехвач", "перехвачена": "перехвач", "перехвачен": "перехвач",
-    "уничтожено": "уничтож", "уничтожены": "уничтож", "уничтожена": "уничтож", "уничтожен": "уничтож",
-    "часа": "час", "часов": "час", "часы": "час", "часу": "час", "часом": "час",
-    "минуты": "мин", "минут": "мин", "минуту": "мин", "минутой": "мин",
+    "сбито": "сбит",
+    "сбиты": "сбит",
+    "сбита": "сбит",
+    "сбит": "сбит",
+    "обнаружено": "обнаруж",
+    "обнаружены": "обнаруж",
+    "обнаружена": "обнаруж",
+    "обнаружен": "обнаруж",
+    "перехвачено": "перехвач",
+    "перехвачены": "перехвач",
+    "перехвачена": "перехвач",
+    "перехвачен": "перехвач",
+    "уничтожено": "уничтож",
+    "уничтожены": "уничтож",
+    "уничтожена": "уничтож",
+    "уничтожен": "уничтож",
+    "часа": "час",
+    "часов": "час",
+    "часы": "час",
+    "часу": "час",
+    "часом": "час",
+    "минуты": "мин",
+    "минут": "мин",
+    "минуту": "мин",
+    "минутой": "мин",
     # EN nouns (singular → plural-agnostic stem)
-    "drone": "drone", "drones": "drone",
-    "vehicle": "vehicle", "vehicles": "vehicle",
-    "missile": "missile", "missiles": "missile",
-    "attack": "attack", "attacks": "attack",
-    "shot": "shot", "shots": "shot",
-    "detected": "detect", "detects": "detect",
+    "drone": "drone",
+    "drones": "drone",
+    "vehicle": "vehicle",
+    "vehicles": "vehicle",
+    "missile": "missile",
+    "missiles": "missile",
+    "attack": "attack",
+    "attacks": "attack",
+    "shot": "shot",
+    "shots": "shot",
+    "detected": "detect",
+    "detects": "detect",
 }
 
 
@@ -739,7 +937,9 @@ def _is_negated(fact: str, text: str) -> bool:
     # 1. fact после "не/нет/без" (в одном предложении, до 4 слов)
     #    NB: \b плохо работает с кириллицей в Python, используем lookarounds
     after = re.compile(
-        r"(?:^|[^а-яёa-z0-9])(не|нет|без|не\s+был[аи]?|ни|н[еи]\s+одного|ни\s+одного|ни\s+одной)\s+(?:\w+\s+){0,4}" + fact_esc + r"(?:\b|[^а-яёa-z0-9])",
+        r"(?:^|[^а-яёa-z0-9])(не|нет|без|не\s+был[аи]?|ни|н[еи]\s+одного|ни\s+одного|ни\s+одной)\s+(?:\w+\s+){0,4}"
+        + fact_esc
+        + r"(?:\b|[^а-яёa-z0-9])",
         re.IGNORECASE,
     )
     if after.search(text_l):
@@ -747,7 +947,8 @@ def _is_negated(fact: str, text: str) -> bool:
 
     # 2. fact до "не/нет" (в одном предложении, до 3 слов между)
     before = re.compile(
-        fact_esc + r"\w*\s+(?:\w+\s+){0,3}(не|нет|не\s+был[аи]?|ни\s+сбит|не\s+сбит|не\s+обнаружен|ни\s+одного)",
+        fact_esc
+        + r"\w*\s+(?:\w+\s+){0,3}(не|нет|не\s+был[аи]?|ни\s+сбит|не\s+сбит|не\s+обнаружен|ни\s+одного)",
         re.IGNORECASE,
     )
     if before.search(text_l):
@@ -771,7 +972,7 @@ def verify_sources(
     *,
     use_llm: bool = True,
     max_facts: int = 10,
-    time_range: Optional[str] = None,
+    time_range: str | None = None,
 ) -> dict:
     """
     4-level verification of top-1 source against other_sources.
@@ -829,9 +1030,7 @@ def verify_sources(
                     # Do NOT count as support. Surface separately so the
                     # user / synthesis stage can see the contradiction.
                     # See audit 2026-06-07, section 5, P0.
-                    numeric_mismatch_sources.append(
-                        (src.get("url", "?"), score, method)
-                    )
+                    numeric_mismatch_sources.append((src.get("url", "?"), score, method))
                 else:
                     supporting_sources.append((src.get("url", "?"), score, method))
 
@@ -864,16 +1063,18 @@ def verify_sources(
         if verified:
             verified_count += 1
 
-        details.append({
-            "fact": fact,
-            "verdict": verdict,
-            "verified": verified,  # legacy: True только для SUPPORTS
-            "negated": negated_in_top1,
-            "supporting_sources": supporting_sources,
-            "refuting_sources": refuting_sources,
-            "numeric_mismatch_sources": numeric_mismatch_sources,
-            "method": supporting_sources[0][2] if supporting_sources else None,
-        })
+        details.append(
+            {
+                "fact": fact,
+                "verdict": verdict,
+                "verified": verified,  # legacy: True только для SUPPORTS
+                "negated": negated_in_top1,
+                "supporting_sources": supporting_sources,
+                "refuting_sources": refuting_sources,
+                "numeric_mismatch_sources": numeric_mismatch_sources,
+                "method": supporting_sources[0][2] if supporting_sources else None,
+            }
+        )
 
     total = len(facts)
     rate = verified_count / total if total else 0.0
@@ -894,13 +1095,14 @@ def verify_sources(
                     facts=[d["fact"] for d in unverified],
                     source_candidates=[
                         {"url": s.get("url", "?"), "text": s.get("text", "")[:2000]}
-                        for s in other_sources if not s.get("error")
+                        for s in other_sources
+                        if not s.get("error")
                     ][:3],
                 )
                 llm_latency = round(time.time() - t0, 2)
 
                 # Map back — use new verdict enum (DR §10)
-                for d, lr in zip(unverified, llm_results):
+                for d, lr in zip(unverified, llm_results, strict=False):
                     verdict = lr.get("verdict")
                     if verdict == "SUPPORTS":
                         d["verified"] = True
@@ -942,7 +1144,7 @@ def deep_search(
     query: str,
     *,
     lang: str = "ru",
-    time_range: Optional[str] = None,
+    time_range: str | None = None,
     top_n: int = 5,
     max_chars: int = MAX_CONTENT_CHARS,
 ) -> dict:
@@ -963,8 +1165,12 @@ def deep_search(
     t0 = time.time()
     res = web_search(query, lang=lang, time_range=time_range, max_results=top_n * 2)
     if not res:
-        return {"query": query, "search_results": [], "sources": [],
-                "stats": {"fetched_ok": 0, "fetched_err": 0, "total_dt": 0.0}}
+        return {
+            "query": query,
+            "search_results": [],
+            "sources": [],
+            "stats": {"fetched_ok": 0, "fetched_err": 0, "total_dt": 0.0},
+        }
 
     # Берём top_n URL — уникальных
     seen = set()
@@ -1020,7 +1226,7 @@ REFORMULATORS = {
 }
 
 
-def reformulate(query: str, source_lang: str = "ru", target_lang: str = "en") -> Optional[str]:
+def reformulate(query: str, source_lang: str = "ru", target_lang: str = "en") -> str | None:
     """
     Простая reformulation: машинный перевод через словарь + реконструкция.
     Это PLACEHOLDER — для production нужен LLM-call. Но для теста хватит.
@@ -1038,10 +1244,10 @@ def deep_research(
     query: str,
     *,
     lang: str = "ru",
-    time_range: Optional[str] = None,
+    time_range: str | None = None,
     top_n: int = 4,
     max_chars: int = MAX_CONTENT_CHARS,
-    alt_queries: Optional[list] = None,
+    alt_queries: list | None = None,
 ) -> dict:
     """
     Multi-query research:
@@ -1097,14 +1303,17 @@ def deep_research(
                 continue
             # Always merge meta for this canonical URL, even on second hit
             # (DR-05062026(3) §4 — multi-query votes must aggregate).
-            meta = sources_meta.setdefault(u, {
-                "engines": set(),
-                "queries": set(),
-                "ranks": [],
-                "snippets": [],
-                "titles": [],
-                "raw_urls": set(),
-            })
+            meta = sources_meta.setdefault(
+                u,
+                {
+                    "engines": set(),
+                    "queries": set(),
+                    "ranks": [],
+                    "snippets": [],
+                    "titles": [],
+                    "raw_urls": set(),
+                },
+            )
             meta["engines"].add(r.get("engine", ""))
             meta["queries"].add(q)
             meta["ranks"].append(rank)
@@ -1162,12 +1371,20 @@ def deep_research(
 
     # Verification (4-level + conditional LLM)
     other_sources = sources[1:] if top1 else []
-    verification = verify_sources(top1, other_sources, query, time_range=effective_time_range) if top1 else {
-        "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-        "verification_details": [], "llm_enhanced": False,
-        "llm_verified_count": 0, "llm_latency": 0.0,
-        "llm_error": None,  # v0.8.2 (Phase 4)
-    }
+    verification = (
+        verify_sources(top1, other_sources, query, time_range=effective_time_range)
+        if top1
+        else {
+            "verified_facts": 0,
+            "total_facts": 0,
+            "verification_rate": 0.0,
+            "verification_details": [],
+            "llm_enhanced": False,
+            "llm_verified_count": 0,
+            "llm_latency": 0.0,
+            "llm_error": None,  # v0.8.2 (Phase 4)
+        }
+    )
 
     return {
         "query": query,
@@ -1188,12 +1405,21 @@ def deep_research(
 
 if __name__ == "__main__":
     import json
+
     print("=== deep_search smoke test ===")
     out = deep_search("БПЛА Москва 5 июня 2026", time_range="day", top_n=3)
-    print(json.dumps({k: v if k != "sources" else f"[{len(v)} sources]" for k, v in out.items()}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {k: v if k != "sources" else f"[{len(v)} sources]" for k, v in out.items()},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     for s in out["sources"][:3]:
         print(f"\n--- {s['url']}")
-        print(f"  confidence={s.get('confidence', 0):.2f}, length={s.get('length', 0)}, dt={s.get('fetch_dt', 0)}s")
+        print(
+            f"  confidence={s.get('confidence', 0):.2f}, length={s.get('length', 0)}, dt={s.get('fetch_dt', 0)}s"
+        )
         print(f"  title: {s.get('title', '')[:100]}")
         if s.get("text"):
             print(f"  preview: {s['text'][:200]}")

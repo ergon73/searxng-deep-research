@@ -19,24 +19,23 @@ Quality Score (QS) ∈ [0, 1]:
   --query ID     Только один query (для debugging)
   --dry-run      Не аппендить в log
 """
+
 import argparse
 import json
 import sys
 import time
-import traceback
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 # Ensure PYTHONPATH — portable: derive src/ from this file's location, not /opt/searxng
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from query_adaptation import adapt_query
-from routing import classify_intent
-from synthesis import synthesize
-from critical_review import review
-
+from critical_review import review  # noqa: E402  (portable path bootstrap above)
+from query_adaptation import adapt_query  # noqa: E402
+from routing import classify_intent  # noqa: E402
+from synthesis import synthesize  # noqa: E402
 
 # Quality Score weights (sum = 1.0)
 # NOTE: `needs_confirmation` is intentionally NOT in the QS formula. Confirmation
@@ -63,6 +62,7 @@ ONLINE_LLM_FALLBACK_DETERMINISTIC = True  # if LLM fails → continue determinis
 @dataclass
 class QueryResult:
     """Результат прогона одного query через pipeline."""
+
     query_id: str
     query: str
     expected_route: str
@@ -121,17 +121,16 @@ def _run_online_pipeline(result: QueryResult) -> None:
     degrade gracefully (one stage failing shouldn't kill the whole run).
     """
     # Late imports to keep --no-network mode hermetic (no LLM deps loaded)
-    from hermes_searxng import web_search
     from hermes_deepresearch import (
         _extract_facts,
+        canonical_url,
         fetch_url,
         verify_sources,
-        canonical_url,
     )
+    from hermes_searxng import web_search
 
     qtext = result.query
     plan_main = result.main_query
-    intent_engines = None  # we set route earlier; reuse classify_intent for engines
 
     # 1. SEARCH
     result.stage = "search"
@@ -171,14 +170,14 @@ def _run_online_pipeline(result: QueryResult) -> None:
     _URL_DENY_PATTERNS = (
         "commons.wikimedia.org/wiki/Category",  # nav pages, not articles
         "/wiki/Category:",
-        "vk.com/wall-",                          # social media posts
+        "vk.com/wall-",  # social media posts
         "vk.com/wall",
-        "instagram.com/p/",                      # social media
+        "instagram.com/p/",  # social media
         "facebook.com/",
         "twitter.com/",
-        "t.me/",                                 # telegram public posts (often low quality)
-        "youtube.com/watch",                     # video (no text facts)
-        "?action=",                              # MediaWiki actions
+        "t.me/",  # telegram public posts (often low quality)
+        "youtube.com/watch",  # video (no text facts)
+        "?action=",  # MediaWiki actions
     )
 
     for r in search_results:
@@ -194,7 +193,7 @@ def _run_online_pipeline(result: QueryResult) -> None:
             if canon in seen:
                 continue
             seen.add(canon)
-        except Exception:
+        except Exception:  # noqa: S110  (unparseable URL → skip silently, intentional)
             pass
         try:
             content = fetch_url(
@@ -202,15 +201,17 @@ def _run_online_pipeline(result: QueryResult) -> None:
                 timeout=ONLINE_FETCH_TIMEOUT,
                 max_chars=ONLINE_FETCH_MAX_CHARS,
             )
-        except Exception as e:
+        except Exception:  # noqa: S112  (fetch error → skip URL, intentional noise filter)
             continue
         if not content or content.get("error"):
             continue
-        sources.append({
-            "url": url,
-            "title": r.get("title", ""),
-            "text": content.get("text", "")[:ONLINE_FETCH_MAX_CHARS],
-        })
+        sources.append(
+            {
+                "url": url,
+                "title": r.get("title", ""),
+                "text": content.get("text", "")[:ONLINE_FETCH_MAX_CHARS],
+            }
+        )
         if len(sources) >= ONLINE_FETCH_TOP_N:
             break
     result.sources_fetched = len(sources)
@@ -253,15 +254,17 @@ def _run_online_pipeline(result: QueryResult) -> None:
     # Build claims_with_results in shape synthesis expects
     claims_with_results: list[dict] = []
     for d in details:
-        claims_with_results.append({
-            "fact": d.get("fact", main_fact),
-            "verdict": d.get("verdict", "INSUFFICIENT"),
-            "reasoning": d.get("reasoning", ""),
-            "supporting_sources": d.get("supporting_sources", []),
-            "refuting_sources": d.get("refuting_sources", []),
-            "numeric_mismatch_sources": d.get("numeric_mismatch_sources", []),
-            "verified": d.get("verified", False),
-        })
+        claims_with_results.append(
+            {
+                "fact": d.get("fact", main_fact),
+                "verdict": d.get("verdict", "INSUFFICIENT"),
+                "reasoning": d.get("reasoning", ""),
+                "supporting_sources": d.get("supporting_sources", []),
+                "refuting_sources": d.get("refuting_sources", []),
+                "numeric_mismatch_sources": d.get("numeric_mismatch_sources", []),
+                "verified": d.get("verified", False),
+            }
+        )
     # NOTE: do NOT add stubs for facts[1:] here — those facts are already
     # represented in details from verify_sources (which calls _extract_facts
     # internally with the same query). Adding them again would inflate
@@ -270,11 +273,18 @@ def _run_online_pipeline(result: QueryResult) -> None:
     result.claims_supported = sum(1 for c in claims_with_results if c["verified"])
     # Track LLM call count and model
     llm_meta = verify_result.get("llm_meta") or {}
-    result.llm_calls = llm_meta.get("calls", 1 if any(
-        c.get("supporting_sources") and any("llm" in str(s) for s in c.get("supporting_sources", []))
-        or c.get("refuting_sources") and any("llm" in str(s) for s in c.get("refuting_sources", []))
-        for c in claims_with_results
-    ) else 0)
+    result.llm_calls = llm_meta.get(
+        "calls",
+        1
+        if any(
+            c.get("supporting_sources")
+            and any("llm" in str(s) for s in c.get("supporting_sources", []))
+            or c.get("refuting_sources")
+            and any("llm" in str(s) for s in c.get("refuting_sources", []))
+            for c in claims_with_results
+        )
+        else 0,
+    )
 
     # 5. SYNTHESIS
     result.stage = "synthesis"
@@ -291,7 +301,7 @@ def _run_online_pipeline(result: QueryResult) -> None:
         return
     result.coverage_score = synth.coverage.get("score", 0.0) if isinstance(synth.coverage, dict) else 0.0
     result.confidence = synth.confidence
-    result.contradiction_rate = (len(synth.contradictions) / max(len(claims_with_results), 1))
+    result.contradiction_rate = len(synth.contradictions) / max(len(claims_with_results), 1)
     result.synthesis_citations = len(synth.citations)
 
     # 6. CRITICAL REVIEW
@@ -303,7 +313,7 @@ def _run_online_pipeline(result: QueryResult) -> None:
             results=claims_with_results,
             source_candidates=sources,
         )
-    except Exception as e:
+    except Exception:
         # Review failure is non-fatal; keep synthesis scores
         result.risk_level = "unknown"
         result.stage = "review_failed"
@@ -398,16 +408,10 @@ def aggregate_results(results: list[QueryResult]) -> dict:
     route_match_count = sum(1 for r in results if r.route_match)
     error_count = sum(1 for r in results if r.error)
     online_count = sum(1 for r in results if r.mode == "online")
-    avg_coverage = (
-        sum(r.coverage_score for r in results) / n
-    )
-    avg_confidence = (
-        sum(r.confidence for r in results) / n
-    )
+    avg_coverage = sum(r.coverage_score for r in results) / n
+    avg_confidence = sum(r.confidence for r in results) / n
     total_llm_calls = sum(r.llm_calls for r in results)
-    avg_stage = (
-        sum(1 for r in results if r.stage == "done") / n
-    )
+    avg_stage = sum(1 for r in results if r.stage == "done") / n
 
     return {
         "count": n,
@@ -429,18 +433,20 @@ def format_report(results: list[QueryResult], aggregate: dict) -> str:
     """Format human-readable report."""
     lines = []
     lines.append("=" * 70)
-    lines.append(f"EVAL REPORT ({aggregate['count']} queries, "
-                 f"{aggregate.get('online_count', 0)} online)")
+    lines.append(f"EVAL REPORT ({aggregate['count']} queries, {aggregate.get('online_count', 0)} online)")
     lines.append("=" * 70)
-    lines.append(f"QS mean: {aggregate['qs_mean']:.4f}  "
-                 f"(min {aggregate['qs_min']:.4f} / max {aggregate['qs_max']:.4f})")
+    lines.append(
+        f"QS mean: {aggregate['qs_mean']:.4f}  "
+        f"(min {aggregate['qs_min']:.4f} / max {aggregate['qs_max']:.4f})"
+    )
     if aggregate.get("online_count", 0) > 0:
-        lines.append(f"  coverage avg: {aggregate.get('avg_coverage', 0):.4f} | "
-                     f"confidence avg: {aggregate.get('avg_confidence', 0):.4f} | "
-                     f"LLM calls: {aggregate.get('total_llm_calls', 0)} | "
-                     f"pipeline done: {aggregate.get('pipeline_completion_rate', 0):.1%}")
-    lines.append(f"Confirmation rate: {aggregate['confirmation_rate']:.1%}  "
-                 f"(target: 0%)")
+        lines.append(
+            f"  coverage avg: {aggregate.get('avg_coverage', 0):.4f} | "
+            f"confidence avg: {aggregate.get('avg_confidence', 0):.4f} | "
+            f"LLM calls: {aggregate.get('total_llm_calls', 0)} | "
+            f"pipeline done: {aggregate.get('pipeline_completion_rate', 0):.1%}"
+        )
+    lines.append(f"Confirmation rate: {aggregate['confirmation_rate']:.1%}  (target: 0%)")
     lines.append(f"Routing accuracy: {aggregate['routing_accuracy']:.1%}")
     lines.append(f"Errors: {aggregate['error_count']}")
     lines.append("")
@@ -466,27 +472,38 @@ def format_report(results: list[QueryResult], aggregate: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Quality Score eval runner")
     parser.add_argument(
-        "--set", type=Path, default=Path("/opt/searxng/data/eval_set.json"),
-        help="Path to eval_set.json",
+        "--set",
+        type=Path,
+        default=REPO_ROOT / "data" / "eval_set.json",
+        help="Path to eval_set.json (default: <repo>/data/eval_set.json)",
     )
     parser.add_argument(
-        "--log", type=Path, default=Path("/opt/searxng/data/eval_log.jsonl"),
-        help="Path to eval_log.jsonl (append)",
+        "--log",
+        type=Path,
+        default=REPO_ROOT / "data" / "eval_log.jsonl",
+        help="Path to eval_log.jsonl (append; default: <repo>/data/eval_log.jsonl)",
     )
     parser.add_argument(
-        "--no-network", action="store_true", default=True,
+        "--no-network",
+        action="store_true",
+        default=True,
         help="Skip web_search/fetch (offline baseline mode, DEFAULT)",
     )
     parser.add_argument(
-        "--online", action="store_true", default=False,
+        "--online",
+        action="store_true",
+        default=False,
         help="Real pipeline: web_search + fetch + LLM verify + synthesis",
     )
     parser.add_argument(
-        "--query", type=str, default=None,
+        "--query",
+        type=str,
+        default=None,
         help="Run only this query_id (для debugging)",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Don't append to log",
     )
     args = parser.parse_args()
@@ -504,8 +521,7 @@ def main() -> int:
     if args.query:
         queries = [q for q in queries if q["id"] == args.query]
         if not queries:
-            print(f"ERROR: query {args.query!r} not found in {args.set}",
-                  file=sys.stderr)
+            print(f"ERROR: query {args.query!r} not found in {args.set}", file=sys.stderr)
             return 1
 
     mode_label = "online" if args.online else "offline"
@@ -523,7 +539,7 @@ def main() -> int:
     if not args.dry_run:
         args.log.parent.mkdir(parents=True, exist_ok=True)
         run_record = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "mode": mode_label,
             "set_version": eval_set.get("version"),
             "aggregate": aggregate,

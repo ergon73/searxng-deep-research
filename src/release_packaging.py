@@ -24,16 +24,14 @@ from __future__ import annotations
 
 import hashlib
 import io
-import os
 import re
 import tarfile
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 from redact import redact_secrets
-
 
 # --- public constants -------------------------------------------------------
 
@@ -78,6 +76,7 @@ MAX_PATH_LEN = 512
 
 # --- exceptions -------------------------------------------------------------
 
+
 class PackagingError(Exception):
     """Базовая ошибка packaging."""
 
@@ -88,9 +87,11 @@ class SecretLeakError(PackagingError):
 
 # --- dataclasses ------------------------------------------------------------
 
+
 @dataclass
 class ReleaseConfig:
     """Конфигурация release artifact."""
+
     root: Path
     output: Path
     redact_secrets: bool = True
@@ -104,22 +105,23 @@ class ReleaseConfig:
         self.root = Path(self.root).resolve()
         self.output = Path(self.output).resolve()
         if not self.release_name:
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            ts = datetime.now(UTC).strftime("%Y-%m-%d")
             self.release_name = f"release-{ts}"
 
 
 @dataclass
 class ReleaseManifest:
     """Метаданные release архива."""
+
     tar_path: Path
     sha256: str
     size_bytes: int
     file_count: int
     file_list: list[str]  # sorted
-    created_at: str       # ISO 8601 UTC
+    created_at: str  # ISO 8601 UTC
     redacted: bool
     release_name: str
-    root_name: str        # top-level dir name в архиве
+    root_name: str  # top-level dir name в архиве
 
     def to_dict(self) -> dict:
         return {
@@ -143,6 +145,7 @@ class ReleaseManifest:
 
 
 # --- gitignore-style ignore -------------------------------------------------
+
 
 class IgnorePattern:
     """Минимальный gitignore-style matcher.
@@ -172,10 +175,10 @@ class IgnorePattern:
         regex_parts = []
         i = 0
         while i < len(p):
-            if p[i:i+3] == "**/":
+            if p[i : i + 3] == "**/":
                 regex_parts.append(".*")
                 i += 3
-            elif p[i:i+3] == "**":
+            elif p[i : i + 3] == "**":
                 regex_parts.append(".*")
                 i += 2
             elif p[i] == "*":
@@ -248,6 +251,7 @@ def _expand_dir_patterns(patterns: list[str]) -> list[str]:
 
 # --- file collection --------------------------------------------------------
 
+
 def collect_files(
     root: Path,
     ignore: IgnorePattern,
@@ -276,14 +280,13 @@ def collect_files(
             files.append(path)
 
     if len(files) > MAX_FILES:
-        raise PackagingError(
-            f"too many files: {len(files)} > MAX_FILES={MAX_FILES}"
-        )
+        raise PackagingError(f"too many files: {len(files)} > MAX_FILES={MAX_FILES}")
 
     return files
 
 
 # --- tar building -----------------------------------------------------------
+
 
 def _build_tarinfo(
     name: str,
@@ -332,9 +335,7 @@ def build_tar(
             try:
                 content = path.read_bytes()
             except OSError as e:
-                raise PackagingError(
-                    f"failed to read {path}: {e}"
-                ) from e
+                raise PackagingError(f"failed to read {path}: {e}") from e
 
             # Apply redaction if enabled
             if config.redact_secrets:
@@ -350,9 +351,7 @@ def build_tar(
             rel = path.relative_to(config.root).as_posix()
             archive_name = f"{root_name}/{rel}"
             if len(archive_name) > MAX_PATH_LEN:
-                raise PackagingError(
-                    f"path too long: {archive_name}"
-                )
+                raise PackagingError(f"path too long: {archive_name}")
 
             # Add to tar
             info = _build_tarinfo(
@@ -366,6 +365,7 @@ def build_tar(
 
 
 # --- main API: build_release() ---------------------------------------------
+
 
 def build_release(config: ReleaseConfig) -> ReleaseManifest:
     """Главная entry point: собирает release archive + manifest.
@@ -418,7 +418,7 @@ def build_release(config: ReleaseConfig) -> ReleaseManifest:
         size_bytes=len(tar_bytes),
         file_count=len(files),
         file_list=sorted(file_list),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         redacted=config.redact_secrets,
         release_name=config.release_name,
         root_name=root_name,
@@ -431,6 +431,7 @@ def build_release(config: ReleaseConfig) -> ReleaseManifest:
 
 
 # --- safety scan ------------------------------------------------------------
+
 
 def _post_pack_safety_scan(
     tar_bytes: bytes,
@@ -446,17 +447,15 @@ def _post_pack_safety_scan(
     for rel in file_list:
         basename = rel.rsplit("/", 1)[-1]
         if basename.startswith(".env") or basename == "secrets":
-            raise SecretLeakError(
-                f"archive contains suspicious file: {rel}"
-            )
+            raise SecretLeakError(f"archive contains suspicious file: {rel}")
 
     # 2. Scan tar contents for common secret patterns
     buf = io.BytesIO(tar_bytes)
     secret_patterns = [
         re.compile(rb"sk-or-v1-[A-Za-z0-9]{20,}"),  # OpenRouter
-        re.compile(rb"sk-[A-Za-z0-9]{20,}"),        # OpenAI
-        re.compile(rb"AKIA[0-9A-Z]{16}"),           # AWS access key
-        re.compile(rb"ghp_[A-Za-z0-9]{30,}"),       # GitHub PAT
+        re.compile(rb"sk-[A-Za-z0-9]{20,}"),  # OpenAI
+        re.compile(rb"AKIA[0-9A-Z]{16}"),  # AWS access key
+        re.compile(rb"ghp_[A-Za-z0-9]{30,}"),  # GitHub PAT
         re.compile(rb"xox[baprs]-[A-Za-z0-9-]{10,}"),  # Slack
     ]
 
@@ -469,16 +468,15 @@ def _post_pack_safety_scan(
                 continue
             try:
                 content = f.read()
-            except Exception:
+            except Exception:  # noqa: S112  (unreadable entry → skip scan, not a packaging failure)
                 continue
             for pat in secret_patterns:
                 if pat.search(content):
-                    raise SecretLeakError(
-                        f"unredacted secret pattern in {member.name}"
-                    )
+                    raise SecretLeakError(f"unredacted secret pattern in {member.name}")
 
 
 # --- verify -----------------------------------------------------------------
+
 
 def verify_release(
     manifest: ReleaseManifest,
@@ -502,35 +500,30 @@ def verify_release(
     # 1. Re-compute SHA256 of tar
     actual_sha = hashlib.sha256(manifest.tar_path.read_bytes()).hexdigest()
     if actual_sha != manifest.sha256:
-        raise PackagingError(
-            f"SHA256 mismatch: expected {manifest.sha256}, got {actual_sha}"
-        )
+        raise PackagingError(f"SHA256 mismatch: expected {manifest.sha256}, got {actual_sha}")
 
     # 2. Unpack
     with tarfile.open(manifest.tar_path, mode="r:gz") as tar:
         # Defense: check total uncompressed size
         total = sum(m.size for m in tar.getmembers())
         if total > MAX_UNPACK_SIZE:
-            raise PackagingError(
-                f"unpack size {total} > MAX_UNPACK_SIZE={MAX_UNPACK_SIZE}"
-            )
+            raise PackagingError(f"unpack size {total} > MAX_UNPACK_SIZE={MAX_UNPACK_SIZE}")
         # Defense: check for path traversal
         for m in tar.getmembers():
             if m.name.startswith("/") or ".." in m.name:
                 raise PackagingError(f"unsafe path in archive: {m.name}")
-        tar.extractall(unpack_dir)
+        tar.extractall(unpack_dir)  # noqa: S202  (path traversal + size guarded above)
 
     # 3. Check root dir exists
     root_dir = unpack_dir / manifest.root_name
     if not root_dir.is_dir():
-        raise PackagingError(
-            f"unpacked root not found: {root_dir}"
-        )
+        raise PackagingError(f"unpacked root not found: {root_dir}")
 
     return True
 
 
 # --- self-test helpers ------------------------------------------------------
+
 
 def quick_verify(
     config: ReleaseConfig,

@@ -20,6 +20,7 @@ What we verify:
 Usage:
   PYTHONPATH=src python3 scripts/e2e_smoke_ranking_independent.py
 """
+
 from __future__ import annotations
 
 import json
@@ -91,6 +92,7 @@ def _run_with_fetch_order(permutation: list[str], query: str) -> dict:
     permuted = [SYNTHETIC_FETCH_RESULTS[u] for u in permutation]
 
     import research_runner
+
     orig_fetch = research_runner._fetch_documents
     research_runner._fetch_documents = lambda urls, *, max_chars=4000: list(permuted)
     orig_dispatch = research_runner._dispatch_search_task
@@ -122,9 +124,21 @@ def main() -> int:
     # Three different fetch-completion orders.
     # Each simulates a different "what the network gave us" order.
     orderings = [
-        ["https://apple.com/about", "https://low-quality.example.com/spam", "https://error.example.com/timeout"],
-        ["https://low-quality.example.com/spam", "https://error.example.com/timeout", "https://apple.com/about"],
-        ["https://error.example.com/timeout", "https://apple.com/about", "https://low-quality.example.com/spam"],
+        [
+            "https://apple.com/about",
+            "https://low-quality.example.com/spam",
+            "https://error.example.com/timeout",
+        ],
+        [
+            "https://low-quality.example.com/spam",
+            "https://error.example.com/timeout",
+            "https://apple.com/about",
+        ],
+        [
+            "https://error.example.com/timeout",
+            "https://apple.com/about",
+            "https://low-quality.example.com/spam",
+        ],
     ]
 
     runs = []
@@ -134,7 +148,7 @@ def main() -> int:
         runs.append(out)
         print(f"  status: {out['status']}")
         print(f"  top1:   {out['top1_url']} (score={out['top1_score']})")
-        print(f"  full order:")
+        print("  full order:")
         for u in out["all_urls_in_order"]:
             print(f"    - {u}")
         print()
@@ -146,17 +160,13 @@ def main() -> int:
     # 1. All three runs should pick the same top1.
     top1_urls = {r["top1_url"] for r in runs}
     if len(top1_urls) != 1:
-        failures.append(
-            f"TOP1_NOT_STABLE: different runs picked different top1s: {top1_urls}"
-        )
+        failures.append(f"TOP1_NOT_STABLE: different runs picked different top1s: {top1_urls}")
 
     # 2. The chosen top1 should be the relevant Apple doc, not the spam
     # or the error doc.
     for r in runs:
         if r["top1_url"] and "apple.com" not in r["top1_url"]:
-            failures.append(
-                f"TOP1_NOT_RELEVANT: top1 is {r['top1_url']}, expected apple.com"
-            )
+            failures.append(f"TOP1_NOT_RELEVANT: top1 is {r['top1_url']}, expected apple.com")
 
     # 3. The full ordering of documents must be IDENTICAL across runs,
     # even though scores differ (because the SearXNG input position is
@@ -177,10 +187,7 @@ def main() -> int:
         if r["all_urls_in_order"]:
             last = r["all_urls_in_order"][-1]
             if "error.example.com" not in last:
-                failures.append(
-                    f"ERROR_DOC_NOT_LAST: error doc not last in order "
-                    f"{r['all_urls_in_order']}"
-                )
+                failures.append(f"ERROR_DOC_NOT_LAST: error doc not last in order {r['all_urls_in_order']}")
 
     # --- Verdict -------------------------------------------------------
 

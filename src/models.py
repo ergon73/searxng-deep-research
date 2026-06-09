@@ -18,13 +18,13 @@ This module is **advisory**: it does not change any existing function. Stages
 that want to adopt typed state can convert at the boundary; the rest of the
 pipeline keeps using dicts for now.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from evidence import EvidenceWindow
-
 
 # Route values intentionally mirror `routing.py` Intent.route vocabulary
 # (general, news, forums, docs, academic, github, reviews, security, product,
@@ -41,14 +41,15 @@ class SearchTask:
     this task exists. Frozen because a planned task is immutable once the
     runner has dispatched it.
     """
+
     query: str
     route: Route = "general"
     language: str = "auto"
-    engines: str | None = None           # comma-separated, e.g. "wikipedia,arxiv"
-    categories: str | None = None        # SearXNG categories, e.g. "news"
-    time_range: str | None = None        # "day" | "week" | "month" | "year" | None
-    priority: int = 0                    # higher = dispatched earlier
-    rationale: str = ""                  # why planner added this task
+    engines: str | None = None  # comma-separated, e.g. "wikipedia,arxiv"
+    categories: str | None = None  # SearXNG categories, e.g. "news"
+    time_range: str | None = None  # "day" | "week" | "month" | "year" | None
+    priority: int = 0  # higher = dispatched earlier
+    rationale: str = ""  # why planner added this task
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,16 +69,17 @@ class Claim:
     claims that are placeholders for LLM enrichment (these are exempt
     from the "every claim needs evidence" invariant).
     """
-    text: str                            # original surface form, e.g. "5 июня 2026"
-    subject: str | None = None           # e.g. "Магнитная буря"
-    predicate: str | None = None         # e.g. "уровень", "температура"
-    value: str | None = None             # e.g. "5", "123 дрона", "красный"
-    unit: str | None = None              # e.g. "Гц", "°C", "человек"
-    date: str | None = None              # ISO date if known
+
+    text: str  # original surface form, e.g. "5 июня 2026"
+    subject: str | None = None  # e.g. "Магнитная буря"
+    predicate: str | None = None  # e.g. "уровень", "температура"
+    value: str | None = None  # e.g. "5", "123 дрона", "красный"
+    unit: str | None = None  # e.g. "Гц", "°C", "человек"
+    date: str | None = None  # ISO date if known
     location: str | None = None
-    polarity: str = "unknown"            # "positive" | "negative" | "unknown"
-    is_stub: bool = False                # Phase 4: placeholder flag (LLM-only)
-    evidence_window: "EvidenceWindow | None" = None  # Phase 4: span pointer
+    polarity: str = "unknown"  # "positive" | "negative" | "unknown"
+    is_stub: bool = False  # Phase 4: placeholder flag (LLM-only)
+    evidence_window: EvidenceWindow | None = None  # Phase 4: span pointer
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -107,15 +109,18 @@ class ResearchState:
     pipeline contract). We promote them to typed dataclasses in a later phase
     if there's a concrete win — see `.hermes/plans/ISSUES.md` #016.
     """
+
     original_query: str
-    adapted: dict[str, Any] | None = None           # output of adapt_query()
+    adapted: dict[str, Any] | None = None  # output of adapt_query()
     search_tasks: list[SearchTask] = field(default_factory=list)
     search_hits: list[dict[str, Any]] = field(default_factory=list)  # legacy dict shape
-    documents: list[dict[str, Any]] = field(default_factory=list)    # legacy dict shape
+    documents: list[dict[str, Any]] = field(default_factory=list)  # legacy dict shape
     claims: list[Claim] = field(default_factory=list)
-    evidence: list[EvidenceWindow] = field(default_factory=list)     # per-claim windows
-    verdicts: list[dict[str, Any]] = field(default_factory=list)      # legacy shape, will gain ClaimVerdict in Phase 3
-    gaps: list[str] = field(default_factory=list)                    # free-form gap descriptions
+    evidence: list[EvidenceWindow] = field(default_factory=list)  # per-claim windows
+    verdicts: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # legacy shape, will gain ClaimVerdict in Phase 3
+    gaps: list[str] = field(default_factory=list)  # free-form gap descriptions
     iterations: int = 0
 
     def to_dict(self) -> dict[str, Any]:

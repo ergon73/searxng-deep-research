@@ -40,41 +40,42 @@ Design notes:
 
 Spec: ~/.hermes/plans/ISSUES.md #018, #019 (this file) and #020 (gap analysis).
 """
+
 from __future__ import annotations
 
 import concurrent.futures
 import time
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from dataclasses import replace as dc_replace
+from typing import Any
 
-# Local imports (typed state + planner)
-from models import ResearchState, SearchTask
-
-# Primitive functions (legacy module — we re-use, do not modify)
-from hermes_deepresearch import (
-    fetch_url,
-    web_search,
-    _extract_facts,
-    verify_sources,
-    canonical_url,
-    MAX_CONCURRENT_FETCH,
-    MAX_CONTENT_CHARS,
-)
-
-# Newer stages
-from synthesis import synthesize
-from critical_review import review, Synthesis, ReviewResult  # type: ignore
+from citations import build_evidence_window, citation_stats, format_cited_claim
+from critical_review import ReviewResult, Synthesis, review  # type: ignore
+from evidence import EvidenceWindow
 
 # Gap analysis (Phase 5, v0.8.0)
 from gap_analysis import analyze_gaps, gaps_to_search_tasks
-from ranking import rank_documents, select_top_n  # v0.8.1.1: source ranking
-from citations import find_span, build_evidence_window, format_cited_claim, citation_stats
-from models import ResearchState, SearchTask, Claim
-from evidence import EvidenceWindow
-from dataclasses import replace as dc_replace
-# Planner
-from planner import build_research_plan, ResearchPlan, plan_to_state
 
+# Primitive functions (legacy module — we re-use, do not modify)
+from hermes_deepresearch import (
+    MAX_CONCURRENT_FETCH,
+    MAX_CONTENT_CHARS,
+    _extract_facts,
+    canonical_url,
+    fetch_url,
+    verify_sources,
+    web_search,
+)
+
+# Local imports (typed state + planner)
+from models import Claim, ResearchState, SearchTask
+
+# Planner
+from planner import ResearchPlan, build_research_plan, plan_to_state
+from ranking import rank_documents  # v0.8.1.1: source ranking
+
+# Newer stages
+from synthesis import synthesize
 
 # ========================================================================
 # Public result type
@@ -84,13 +85,14 @@ from planner import build_research_plan, ResearchPlan, plan_to_state
 @dataclass
 class ResearchResult:
     """Public output of `run_research()`. Typed, JSON-serialisable."""
-    status: str                            # "needs_confirmation" | "done" | "error"
+
+    status: str  # "needs_confirmation" | "done" | "error"
     original_query: str
-    plan: Optional[ResearchPlan] = None    # set for "needs_confirmation" and "done"
-    state: Optional[ResearchState] = None  # final state, set for "done"
-    synthesis: Optional[Synthesis] = None  # set for "done"
-    review: Optional[ReviewResult] = None  # set for "done"
-    error: Optional[str] = None            # set for "error"
+    plan: ResearchPlan | None = None  # set for "needs_confirmation" and "done"
+    state: ResearchState | None = None  # final state, set for "done"
+    synthesis: Synthesis | None = None  # set for "done"
+    review: ReviewResult | None = None  # set for "done"
+    error: str | None = None  # set for "error"
     elapsed_sec: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -154,9 +156,7 @@ def _task_key(task: SearchTask) -> tuple:
     )
 
 
-def _fetch_documents(
-    urls: list[str], *, max_chars: int = MAX_CONTENT_CHARS
-) -> list[dict]:
+def _fetch_documents(urls: list[str], *, max_chars: int = MAX_CONTENT_CHARS) -> list[dict]:
     """Fetch a list of URLs in parallel, return list of {url, text, title, ...}.
 
     The returned list preserves the order of the input `urls`. This is
@@ -250,7 +250,7 @@ def _extract_typed_claims_with_citations(
     and a handful of docs, this is well under 1ms per claim in pure-Python.
     """
     augmented: list[Claim] = []
-    for doc_index, doc in enumerate(documents):
+    for _doc_index, doc in enumerate(documents):
         text = doc.get("text", "") or ""
         if not text or doc.get("error"):
             continue
@@ -315,7 +315,7 @@ def _flatten_verification_results(verdicts: list[dict] | list[Any]) -> list[dict
     function is robust. The runtime isinstance() check handles both.
     """
     out: list[dict] = []
-    for v in (verdicts or []):
+    for v in verdicts or []:
         if not isinstance(v, dict):
             continue
         details = v.get("verification_details", [])
@@ -404,9 +404,7 @@ def run_research(
         # `current_tasks` (a snapshot of the queue) and then resets the
         # queue to receive the next round of gap-fill tasks.
         pending_tasks: list[SearchTask] = list(plan.search_tasks)
-        seen_task_keys: set[tuple] = {
-            _task_key(t) for t in plan.search_tasks
-        }
+        seen_task_keys: set[tuple] = {_task_key(t) for t in plan.search_tasks}
         seen_urls: set[str] = set()
 
         for iteration in range(max_iterations):
@@ -459,9 +457,7 @@ def run_research(
             documents.extend(iter_documents)
 
             # 4b. Extract claims from documents
-            all_claims, claims_meta = _extract_claims_from_documents(
-                iter_documents, query
-            )
+            all_claims, claims_meta = _extract_claims_from_documents(iter_documents, query)
             # Phase 4 (#019) — span-level citations. Augment `state.claims`
             # with typed `Claim` objects + evidence windows. This is a
             # separate pass from the legacy string extraction (which feeds
@@ -469,9 +465,7 @@ def run_research(
             # the typed pass is pure-stdlib and < 1ms per claim.
             typed_claims = _extract_typed_claims_with_citations(iter_documents, query)
             state.claims.extend(typed_claims)
-            state.evidence.extend(
-                c.evidence_window for c in typed_claims if c.evidence_window is not None
-            )
+            state.evidence.extend(c.evidence_window for c in typed_claims if c.evidence_window is not None)
 
             # 4c. Verification (4-level + conditional LLM)
             # v0.8.1.1: iter_documents is now sorted by source_score desc
@@ -481,18 +475,26 @@ def run_research(
                 top1 = iter_documents[0]
                 others = iter_documents[1:]
                 verification = verify_sources(
-                    top1, others, query,
+                    top1,
+                    others,
+                    query,
                     time_range=plan.intent.time_range,
                     use_llm=use_llm,  # v0.8.1 Phase A #3: honour the flag
                 )
                 state.verdicts.append(verification)
             else:
-                state.verdicts.append({
-                    "verified_facts": 0, "total_facts": 0,
-                    "verification_rate": 0.0, "verification_details": [],
-                    "llm_enhanced": False, "llm_verified_count": 0,
-                    "llm_latency": 0.0, "llm_error": None,
-                })
+                state.verdicts.append(
+                    {
+                        "verified_facts": 0,
+                        "total_facts": 0,
+                        "verification_rate": 0.0,
+                        "verification_details": [],
+                        "llm_enhanced": False,
+                        "llm_verified_count": 0,
+                        "llm_latency": 0.0,
+                        "llm_error": None,
+                    }
+                )
 
             # 4d. Gap analysis (NEW in Phase 5)
             # Update state with the latest snapshot so analyze_gaps sees
@@ -549,11 +551,7 @@ def run_research(
         # `results[i]`. When `results` is empty, fall back to the legacy
         # string-claims list (for backward compat with offline smoke tests
         # that don't go through verification).
-        synth_claims = (
-            [r.get("fact", "") for r in fact_results]
-            if fact_results
-            else flat_claims
-        )
+        synth_claims = [r.get("fact", "") for r in fact_results] if fact_results else flat_claims
 
         synth = synthesize(
             query=query,
@@ -605,9 +603,7 @@ def run_research(
                 if c.evidence_window is not None
             ]
             synth.coverage["inline_citations"] = inline
-            synth.coverage["unverified_claims"] = [
-                c.text for c in state.claims if c.evidence_window is None
-            ]
+            synth.coverage["unverified_claims"] = [c.text for c in state.claims if c.evidence_window is None]
 
         # review() is deterministic critic; needs synthesis + claims + results + source_candidates.
         # Same flatten rule as synthesize() — review expects per-fact results.

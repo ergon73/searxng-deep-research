@@ -32,9 +32,9 @@ We deliberately do NOT add:
 
 Spec: ~/.hermes/plans/ISSUES.md #020.
 """
+
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -50,10 +50,10 @@ if TYPE_CHECKING:
 # Thresholds (single source of truth — easy to tune)
 # ========================================================================
 
-MIN_DOCUMENTS = 3                  # below this: too_few_sources
-MIN_UNIQUE_DOMAINS = 2             # below this: low_source_diversity
+MIN_DOCUMENTS = 3  # below this: too_few_sources
+MIN_UNIQUE_DOMAINS = 2  # below this: low_source_diversity
 MAX_UNSUPPORTED_CLAIM_RATIO = 0.4  # above this: too_many_unsupported_claims
-MIN_TOP1_CONFIDENCE = 0.5          # below this: low_confidence
+MIN_TOP1_CONFIDENCE = 0.5  # below this: low_confidence
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,7 @@ class ResearchGap:
     `kind` is a short string code (e.g. "too_few_sources") — caller can
     switch on it. `detail` is a human-readable explanation.
     """
+
     kind: str
     detail: str
 
@@ -136,7 +137,7 @@ def _top1_confidence(documents: list[dict]) -> float:
 # ========================================================================
 
 
-def analyze_gaps(state: "ResearchState") -> list[ResearchGap]:
+def analyze_gaps(state: ResearchState) -> list[ResearchGap]:
     """Analyse a ResearchState and return a list of detected gaps.
 
     Pure function. No side effects, no I/O. Order of returned gaps is
@@ -150,26 +151,32 @@ def analyze_gaps(state: "ResearchState") -> list[ResearchGap]:
 
     # 1. Too few sources
     if len(documents) < MIN_DOCUMENTS:
-        gaps.append(ResearchGap(
-            kind="too_few_sources",
-            detail=f"only {len(documents)} documents fetched (min {MIN_DOCUMENTS})",
-        ))
+        gaps.append(
+            ResearchGap(
+                kind="too_few_sources",
+                detail=f"only {len(documents)} documents fetched (min {MIN_DOCUMENTS})",
+            )
+        )
 
     # 2. No search results (already detected in runner; surfaced here too)
     if not search_hits and not documents:
-        gaps.append(ResearchGap(
-            kind="no_search_results",
-            detail="web_search returned 0 hits for all tasks",
-        ))
+        gaps.append(
+            ResearchGap(
+                kind="no_search_results",
+                detail="web_search returned 0 hits for all tasks",
+            )
+        )
 
     # 3. Low source diversity
     if documents:  # only meaningful if we have at least 1 source
         unique_domains = _count_unique_domains(documents)
         if unique_domains < MIN_UNIQUE_DOMAINS:
-            gaps.append(ResearchGap(
-                kind="low_source_diversity",
-                detail=f"only {unique_domains} unique domain(s) (min {MIN_UNIQUE_DOMAINS})",
-            ))
+            gaps.append(
+                ResearchGap(
+                    kind="low_source_diversity",
+                    detail=f"only {unique_domains} unique domain(s) (min {MIN_UNIQUE_DOMAINS})",
+                )
+            )
 
     # 4. Too many unsupported claims
     # v0.8.1.1: substring match (claim[:50] in document_text) was a
@@ -228,30 +235,36 @@ def analyze_gaps(state: "ResearchState") -> list[ResearchGap]:
         ratio = unsupported / max(1, len(claims))
         if ratio > MAX_UNSUPPORTED_CLAIM_RATIO:
             verdict_source = "verdicts" if use_verdicts else "substring_fallback"
-            gaps.append(ResearchGap(
-                kind="too_many_unsupported_claims",
-                detail=(
-                    f"{unsupported}/{len(claims)} claims ({ratio:.0%}) "
-                    f"unsupported (max {MAX_UNSUPPORTED_CLAIM_RATIO:.0%}, "
-                    f"source={verdict_source})"
-                ),
-            ))
+            gaps.append(
+                ResearchGap(
+                    kind="too_many_unsupported_claims",
+                    detail=(
+                        f"{unsupported}/{len(claims)} claims ({ratio:.0%}) "
+                        f"unsupported (max {MAX_UNSUPPORTED_CLAIM_RATIO:.0%}, "
+                        f"source={verdict_source})"
+                    ),
+                )
+            )
 
     # 5. Contradictions unresolved
     if _has_contradiction(verdicts):
-        gaps.append(ResearchGap(
-            kind="contradictions_unresolved",
-            detail="verification found conflicting sources that weren't reconciled",
-        ))
+        gaps.append(
+            ResearchGap(
+                kind="contradictions_unresolved",
+                detail="verification found conflicting sources that weren't reconciled",
+            )
+        )
 
     # 6. Low top-1 confidence
     if documents:
         conf = _top1_confidence(documents)
         if conf < MIN_TOP1_CONFIDENCE:
-            gaps.append(ResearchGap(
-                kind="low_confidence",
-                detail=f"top-1 source_score={conf:.2f} (min {MIN_TOP1_CONFIDENCE})",
-            ))
+            gaps.append(
+                ResearchGap(
+                    kind="low_confidence",
+                    detail=f"top-1 source_score={conf:.2f} (min {MIN_TOP1_CONFIDENCE})",
+                )
+            )
 
     # Sort by kind for deterministic test output
     gaps.sort(key=lambda g: g.kind)
@@ -269,7 +282,7 @@ def gaps_to_search_tasks(
     original_query: str,
     route: str = "general",
     language: str = "en",
-) -> list["SearchTask"]:
+) -> list[SearchTask]:
     """Convert detected gaps into additional `SearchTask`s for the next pass.
 
     This is the bridge between gap analysis and the runner's iteration loop.
@@ -298,54 +311,64 @@ def gaps_to_search_tasks(
 
         if gap.kind == "too_few_sources":
             seen_kinds.add(gap.kind)
-            tasks.append(SearchTask(
-                query=original_query,
-                route=route,
-                language=language,
-                priority=50,
-                rationale="gap-fill: too_few_sources → retry with original query",
-            ))
+            tasks.append(
+                SearchTask(
+                    query=original_query,
+                    route=route,
+                    language=language,
+                    priority=50,
+                    rationale="gap-fill: too_few_sources → retry with original query",
+                )
+            )
         elif gap.kind == "low_source_diversity":
             seen_kinds.add(gap.kind)
             # Try to broaden via engines: use no engine filter (let SearXNG pick)
-            tasks.append(SearchTask(
-                query=original_query,
-                route=route,
-                language=language,
-                engines=None,        # explicitly drop engine filter
-                priority=50,
-                rationale="gap-fill: low_source_diversity → retry without engine filter",
-            ))
+            tasks.append(
+                SearchTask(
+                    query=original_query,
+                    route=route,
+                    language=language,
+                    engines=None,  # explicitly drop engine filter
+                    priority=50,
+                    rationale="gap-fill: low_source_diversity → retry without engine filter",
+                )
+            )
         elif gap.kind == "too_many_unsupported_claims":
             seen_kinds.add(gap.kind)
             # Reformulate to a more specific query
-            tasks.append(SearchTask(
-                query=f"{original_query} facts evidence sources",
-                route=route,
-                language=language,
-                priority=50,
-                rationale="gap-fill: too_many_unsupported_claims → reformulate to specific",
-            ))
+            tasks.append(
+                SearchTask(
+                    query=f"{original_query} facts evidence sources",
+                    route=route,
+                    language=language,
+                    priority=50,
+                    rationale="gap-fill: too_many_unsupported_claims → reformulate to specific",
+                )
+            )
         elif gap.kind == "contradictions_unresolved":
             seen_kinds.add(gap.kind)
             # Look for the contradicting source explicitly
-            tasks.append(SearchTask(
-                query=f"{original_query} review",
-                route=route,
-                language=language,
-                priority=50,
-                rationale="gap-fill: contradictions_unresolved → add review query",
-            ))
+            tasks.append(
+                SearchTask(
+                    query=f"{original_query} review",
+                    route=route,
+                    language=language,
+                    priority=50,
+                    rationale="gap-fill: contradictions_unresolved → add review query",
+                )
+            )
         elif gap.kind == "low_confidence":
             seen_kinds.add(gap.kind)
             # Try with a more authoritative source hint
-            tasks.append(SearchTask(
-                query=f"{original_query} official documentation",
-                route=route,
-                language=language,
-                priority=50,
-                rationale="gap-fill: low_confidence → seek authoritative sources",
-            ))
+            tasks.append(
+                SearchTask(
+                    query=f"{original_query} official documentation",
+                    route=route,
+                    language=language,
+                    priority=50,
+                    rationale="gap-fill: low_confidence → seek authoritative sources",
+                )
+            )
         # NOTE: "no_search_results" is intentionally NOT retried — if all
         # queries returned 0, more queries of the same kind won't help.
 

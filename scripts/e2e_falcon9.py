@@ -22,6 +22,7 @@ Outputs:
   - stdout: summary
   - /tmp/e2e-falcon9-*.json: full trace
 """
+
 import json
 import sys
 import time
@@ -30,18 +31,18 @@ from pathlib import Path
 # Ensure imports — portable: derive src/ from this file's location, not /opt/searxng
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from query_adaptation import adapt_query, build_search_plan_preview
-from routing import classify_intent
-from evidence import extract_windows, windows_to_blob
-from synthesis import synthesize, enrich_with_llm
 from critical_review import review
-from hermes_searxng import web_search
+from evidence import extract_windows, windows_to_blob
 from hermes_deepresearch import (
     _extract_facts,
+    canonical_url,
     fetch_url,
     verify_sources,
-    canonical_url,
 )
+from hermes_searxng import web_search
+from query_adaptation import adapt_query
+from routing import classify_intent
+from synthesis import synthesize
 
 QUERY = "Сколько ступеней у ракеты Falcon 9 и в каком году первый запуск"
 ENG_QUERY = "Falcon 9 rocket stages first launch year"
@@ -115,11 +116,13 @@ def main() -> int:
         if not content or content.get("error"):
             print(f"    SKIP {url[:50]}: {content.get('error') if content else 'no content'}")
             continue
-        sources.append({
-            "url": url,
-            "title": r.get("title", ""),
-            "text": content.get("text", "")[:4000],
-        })
+        sources.append(
+            {
+                "url": url,
+                "title": r.get("title", ""),
+                "text": content.get("text", "")[:4000],
+            }
+        )
         if len(sources) >= 3:
             break
     print(f"  Fetched {len(sources)} sources")
@@ -146,12 +149,14 @@ def main() -> int:
             windows = extract_windows(src["text"], fact, window_size=300, max_windows=2)
             if windows:
                 blob = windows_to_blob(windows)
-                evidence_blocks.append({
-                    "fact": fact,
-                    "url": src["url"],
-                    "text": blob,
-                    "windows_count": len(windows),
-                })
+                evidence_blocks.append(
+                    {
+                        "fact": fact,
+                        "url": src["url"],
+                        "text": blob,
+                        "windows_count": len(windows),
+                    }
+                )
     print(f"  Generated {len(evidence_blocks)} evidence blocks")
 
     # 7. VERIFY SOURCES (6.5) — deterministic mode (use_llm=False)
@@ -184,27 +189,31 @@ def main() -> int:
             use_llm=False,  # OFFLINE MODE
         )
         d = result.get("details", [{}])[0] if result.get("details") else {}
-        claims_with_results.append({
-            "fact": main_fact,
-            "verdict": d.get("verdict", "INSUFFICIENT"),
-            "reasoning": d.get("reasoning", ""),
-            "supporting_sources": d.get("supporting_sources", []),
-            "refuting_sources": d.get("refuting_sources", []),
-            "numeric_mismatch_sources": d.get("numeric_mismatch_sources", []),
-            "verified": d.get("verified", False),
-        })
+        claims_with_results.append(
+            {
+                "fact": main_fact,
+                "verdict": d.get("verdict", "INSUFFICIENT"),
+                "reasoning": d.get("reasoning", ""),
+                "supporting_sources": d.get("supporting_sources", []),
+                "refuting_sources": d.get("refuting_sources", []),
+                "numeric_mismatch_sources": d.get("numeric_mismatch_sources", []),
+                "verified": d.get("verified", False),
+            }
+        )
 
     # For remaining facts, mark as INSUFFICIENT (would need separate LLM call in production)
     for fact in facts[1:4]:
-        claims_with_results.append({
-            "fact": fact,
-            "verdict": "INSUFFICIENT",
-            "reasoning": "(offline mode: only first fact verified)",
-            "supporting_sources": [],
-            "refuting_sources": [],
-            "numeric_mismatch_sources": [],
-            "verified": False,
-        })
+        claims_with_results.append(
+            {
+                "fact": fact,
+                "verdict": "INSUFFICIENT",
+                "reasoning": "(offline mode: only first fact verified)",
+                "supporting_sources": [],
+                "refuting_sources": [],
+                "numeric_mismatch_sources": [],
+                "verified": False,
+            }
+        )
 
     print(f"  Verified {len(claims_with_results)} claims (1 fully, rest stub)")
     for c in claims_with_results[:6]:
@@ -267,10 +276,7 @@ def main() -> int:
             "adaptation_method": plan.get("adaptation_method"),
         },
         "search_results_count": len(results),
-        "sources_fetched": [
-            {"url": s["url"], "title": s["title"], "len": len(s["text"])}
-            for s in sources
-        ],
+        "sources_fetched": [{"url": s["url"], "title": s["title"], "len": len(s["text"])} for s in sources],
         "facts_extracted": facts,
         "claims_verified": [
             {
@@ -296,8 +302,7 @@ def main() -> int:
             "risk_score": rv.risk_score,
             "flags_count": len(rv.flags),
             "flags_by_category": {
-                cat: len([f for f in rv.flags if f.category == cat])
-                for cat in {f.category for f in rv.flags}
+                cat: len([f for f in rv.flags if f.category == cat]) for cat in {f.category for f in rv.flags}
             },
             "recommendations": rv.recommendations,
             "confidence_adjustment": rv.confidence_adjustment,

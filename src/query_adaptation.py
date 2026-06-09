@@ -13,6 +13,7 @@ Designed 2026-06-06 after 33-run eval revealed:
 - 1/10 long queries returned 0 sources; 3/8 returned Instagram/Facebook as top-1
   for technical questions
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,6 @@ import re
 import sys
 from itertools import combinations
 from pathlib import Path
-from typing import Optional
 
 # Reuse entity extraction from hermes_deepresearch
 _HERMES_RESEARCH = Path(__file__).parent
@@ -28,6 +28,7 @@ sys.path.insert(0, str(_HERMES_RESEARCH))
 
 try:
     from hermes_deepresearch import _extract_facts
+
     _HAS_HERMES = True
 except ImportError:
     _HAS_HERMES = False
@@ -35,6 +36,7 @@ except ImportError:
 # Skill 6.3: retrieval routing. Pure-function classifier, safe to import.
 try:
     from routing import classify_intent, should_warn_about_routing
+
     _HAS_ROUTING = True
 except ImportError:
     _HAS_ROUTING = False
@@ -43,6 +45,7 @@ except ImportError:
 # ====================================================================
 # Language detection
 # ====================================================================
+
 
 def detect_language(query: str) -> str:
     """Word-level language detection for mixed-script queries.
@@ -57,14 +60,14 @@ def detect_language(query: str) -> str:
     # Split on whitespace; keep only words with letters
     words = [w for w in query.split() if any(c.isalpha() for c in w)]
     if not words:
-        return 'en'
-    cyrillic_words = sum(1 for w in words if any('\u0400' <= c <= '\u04FF' for c in w))
+        return "en"
+    cyrillic_words = sum(1 for w in words if any("\u0400" <= c <= "\u04ff" for c in w))
     # Strict majority (>50%): "Gemma 4 12B на русском" has 2 cyrillic of 4
     # alpha-words = 50% exactly, which is ambiguous. We default to 'en'
     # in the tie, since most Russian users writing in mixed-script do
     # so for product codes (English). Only declare 'ru' if cyrillic
     # words are a clear majority.
-    return 'ru' if cyrillic_words / len(words) > 0.5 else 'en'
+    return "ru" if cyrillic_words / len(words) > 0.5 else "en"
 
 
 # ====================================================================
@@ -78,10 +81,10 @@ def detect_language(query: str) -> str:
 # из-за чего все русские capitalized слова (Сколько, Ступеней, Ракеты, Году)
 # не извлекались → main_query терял critical content words.
 _PRODUCT_ENTITY_RE = re.compile(
-    r'\b([A-ZА-ЯЁ][a-zа-яё]{2,}|\d+[A-ZА-ЯЁ]+[a-zа-яё]*|[a-zа-яё]*[A-ZА-ЯЁ][a-zа-яё]+)'  # Capital (Gemma/Сколько), num+unit (24GB, 16MB), or camelCase (iPhone)
-    r'(?:\s+\d+[A-ZА-ЯЁ]?(?:\.\d+)?[a-zа-яё]*)*'   # Version-like segments
-    r'(?:\s+[A-ZА-ЯЁ][a-zа-яё]{2,})?'              # Optional trailing Capitalized word (Pro, Plus)
-    r'(?:\s+\d+[A-ZА-ЯЁ]?)?'                       # Optional trailing version
+    r"\b([A-ZА-ЯЁ][a-zа-яё]{2,}|\d+[A-ZА-ЯЁ]+[a-zа-яё]*|[a-zа-яё]*[A-ZА-ЯЁ][a-zа-яё]+)"  # Capital (Gemma/Сколько), num+unit (24GB, 16MB), or camelCase (iPhone)
+    r"(?:\s+\d+[A-ZА-ЯЁ]?(?:\.\d+)?[a-zа-яё]*)*"  # Version-like segments
+    r"(?:\s+[A-ZА-ЯЁ][a-zа-яё]{2,})?"  # Optional trailing Capitalized word (Pro, Plus)
+    r"(?:\s+\d+[A-ZА-ЯЁ]?)?"  # Optional trailing version
 )
 
 
@@ -97,9 +100,7 @@ def _extract_candidate_entities(query: str) -> list[str]:
         ent = match.group(0).strip()
         # Filter: must have at least one letter, at least 2 chars,
         # and not be all stop words
-        if (len(ent) >= 2
-                and any(c.isalpha() for c in ent)
-                and not all(_is_stop_word(t) for t in ent.split())):
+        if len(ent) >= 2 and any(c.isalpha() for c in ent) and not all(_is_stop_word(t) for t in ent.split()):
             candidates.append(ent)
     return candidates
 
@@ -127,7 +128,7 @@ def _extract_entities_combined(query: str) -> list[str]:
                 # _extract_facts returns short facts; filter to noun-phrase-like
                 if 1 <= len(f.split()) <= 4 and f not in entities:
                     entities.append(f)
-        except Exception:
+        except Exception:  # noqa: S110  (facts extraction is best-effort; fall back to entities-only)
             pass
 
     # 3. Lowercase content nouns (FIX 2026-06-07 e2e Falcon 9).
@@ -146,16 +147,49 @@ _CONTENT_NOUN_RE = re.compile(r"[A-Za-zА-Яа-яЁё]{4,}")
 # Дополнение к _STOP_WORDS (которые слишком агрессивно вырезают).
 _CONTENT_NOUN_BLACKLIST = {
     # Question words
-    "сколько", "когда", "где", "кто", "что", "какой", "какая", "какое", "какие",
-    "почему", "зачем", "как", "чем", "каким", "какую",
+    "сколько",
+    "когда",
+    "где",
+    "кто",
+    "что",
+    "какой",
+    "какая",
+    "какое",
+    "какие",
+    "почему",
+    "зачем",
+    "как",
+    "чем",
+    "каким",
+    "какую",
     # Verbs / auxiliary
-    "есть", "было", "была", "были", "будет", "будут", "является",
+    "есть",
+    "было",
+    "была",
+    "были",
+    "будет",
+    "будут",
+    "является",
     # Prepositions / particles
-    "также", "пожалуйста", "вообще", "именно",
+    "также",
+    "пожалуйста",
+    "вообще",
+    "именно",
     # Демонстративы / указатели
-    "этот", "эта", "это", "эти", "тот", "та", "те",
+    "этот",
+    "эта",
+    "это",
+    "эти",
+    "тот",
+    "та",
+    "те",
     # "Сейчас" / time refs
-    "сейчас", "сегодня", "вчера", "завтра", "недавно", "давно",
+    "сейчас",
+    "сегодня",
+    "вчера",
+    "завтра",
+    "недавно",
+    "давно",
 }
 
 
@@ -186,21 +220,136 @@ def _extract_content_nouns(query: str) -> list[str]:
 
 _STOP_WORDS = {
     # English
-    "the", "a", "an", "and", "or", "but", "for", "of", "to", "in", "on",
-    "is", "are", "was", "were", "be", "been", "this", "that", "it", "i",
-    "you", "we", "they", "my", "your", "our", "their", "with", "from",
-    "as", "by", "at", "do", "does", "did", "have", "has", "had", "can",
-    "could", "would", "should", "will", "may", "might", "must", "need",
-    "want", "know", "tell", "explain", "understand", "looking", "find",
-    "some", "any", "all", "how", "what", "why", "when", "where", "which",
-    "more", "most", "best", "good", "need", "see", "use", "using", "used",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "for",
+    "of",
+    "to",
+    "in",
+    "on",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "this",
+    "that",
+    "it",
+    "i",
+    "you",
+    "we",
+    "they",
+    "my",
+    "your",
+    "our",
+    "their",
+    "with",
+    "from",
+    "as",
+    "by",
+    "at",
+    "do",
+    "does",
+    "did",
+    "have",
+    "has",
+    "had",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "may",
+    "might",
+    "must",
+    "need",
+    "want",
+    "know",
+    "tell",
+    "explain",
+    "understand",
+    "looking",
+    "find",
+    "some",
+    "any",
+    "all",
+    "how",
+    "what",
+    "why",
+    "when",
+    "where",
+    "which",
+    "more",
+    "most",
+    "best",
+    "good",
+    "see",
+    "use",
+    "using",
+    "used",
     # Russian
-    "и", "в", "на", "с", "по", "для", "не", "что", "это", "как", "или",
-    "из", "за", "к", "у", "о", "от", "до", "при", "так", "его", "её",
-    "их", "мы", "вы", "он", "она", "они", "быть", "был", "была", "было",
-    "мне", "тебе", "нам", "вам", "есть", "нет", "да", "могу", "может",
-    "хочу", "надо", "нужно", "можно", "также", "ещё", "еще", "которые",
-    "этот", "эта", "эти", "тот", "та", "те", "который", "которая",
+    "и",
+    "в",
+    "на",
+    "с",
+    "по",
+    "для",
+    "не",
+    "что",
+    "это",
+    "как",
+    "или",
+    "из",
+    "за",
+    "к",
+    "у",
+    "о",
+    "от",
+    "до",
+    "при",
+    "так",
+    "его",
+    "её",
+    "их",
+    "мы",
+    "вы",
+    "он",
+    "она",
+    "они",
+    "быть",
+    "был",
+    "была",
+    "было",
+    "мне",
+    "тебе",
+    "нам",
+    "вам",
+    "есть",
+    "нет",
+    "да",
+    "могу",
+    "может",
+    "хочу",
+    "надо",
+    "нужно",
+    "можно",
+    "также",
+    "ещё",
+    "еще",
+    "которые",
+    "этот",
+    "эта",
+    "эти",
+    "тот",
+    "та",
+    "те",
+    "который",
+    "которая",
 }
 
 
@@ -257,15 +406,46 @@ def _score_entity(entity: str, query: str) -> float:
 #
 # See audit 2026-06-07, section 5, P0/P1: narrative noise.
 _NARRATIVE_INTRO_WORDS_RU = {
-    "расскажи", "подробно", "опиши", "опишите", "сравни", "сравните",
-    "найди", "найдите", "покажи", "покажите", "хочу", "хотел", "хотела",
-    "хотелось", "можешь", "может", "давай", "давайте",
-    "про", "об",  # prepositions that always signal context, not topic
+    "расскажи",
+    "подробно",
+    "опиши",
+    "опишите",
+    "сравни",
+    "сравните",
+    "найди",
+    "найдите",
+    "покажи",
+    "покажите",
+    "хочу",
+    "хотел",
+    "хотела",
+    "хотелось",
+    "можешь",
+    "может",
+    "давай",
+    "давайте",
+    "про",
+    "об",  # prepositions that always signal context, not topic
 }
 _NARRATIVE_INTRO_WORDS_EN = {
-    "specifically", "generally", "basically", "actually", "really",
-    "please", "kindly", "describe", "explain", "tell", "show", "find",
-    "want", "wanted", "looking", "give", "gives", "overview",
+    "specifically",
+    "generally",
+    "basically",
+    "actually",
+    "really",
+    "please",
+    "kindly",
+    "describe",
+    "explain",
+    "tell",
+    "show",
+    "find",
+    "want",
+    "wanted",
+    "looking",
+    "give",
+    "gives",
+    "overview",
 }
 _NARRATIVE_INTRO_WORDS = _NARRATIVE_INTRO_WORDS_RU | _NARRATIVE_INTRO_WORDS_EN
 
@@ -273,24 +453,100 @@ _NARRATIVE_INTRO_WORDS = _NARRATIVE_INTRO_WORDS_RU | _NARRATIVE_INTRO_WORDS_EN
 # search target. Hardware specs like "24GB GPU" are NOT in this list.
 _NARRATIVE_SIZE_UNITS = {
     # Russian
-    "человек", "людей", "люди", "месяц", "месяца", "месяцев",
-    "неделя", "недели", "недель", "год", "года", "лет",
-    "день", "дня", "дней", "час", "часа", "часов",
-    "минут", "минута", "минуты",
-    "вариант", "варианта", "вариантов", "способ", "способа", "способов",
-    "пункт", "пункта", "пунктов", "пример", "примера", "примеров",
-    "проект", "проекта", "проектов", "задач", "задача", "задачи",
-    "шаг", "шага", "шагов", "этап", "этапа", "этапов",
-    "раз", "раза", "раз", "штук", "штука", "штуки",
+    "человек",
+    "людей",
+    "люди",
+    "месяц",
+    "месяца",
+    "месяцев",
+    "неделя",
+    "недели",
+    "недель",
+    "год",
+    "года",
+    "лет",
+    "день",
+    "дня",
+    "дней",
+    "час",
+    "часа",
+    "часов",
+    "минут",
+    "минута",
+    "минуты",
+    "вариант",
+    "варианта",
+    "вариантов",
+    "способ",
+    "способа",
+    "способов",
+    "пункт",
+    "пункта",
+    "пунктов",
+    "пример",
+    "примера",
+    "примеров",
+    "проект",
+    "проекта",
+    "проектов",
+    "задач",
+    "задача",
+    "задачи",
+    "шаг",
+    "шага",
+    "шагов",
+    "этап",
+    "этапа",
+    "этапов",
+    "раз",
+    "раза",
+    "штук",
+    "штука",
+    "штуки",
     # English — generic time / count / size words that signal project
     # context, not search topic.
-    "days", "day", "weeks", "week", "months", "month", "years", "year",
-    "hours", "hour", "minutes", "minute", "seconds", "second",
-    "times", "items", "units", "steps", "lines", "examples",
-    "people", "person", "users", "user", "customers", "customer",
-    "projects", "project", "tasks", "task", "stories", "story",
-    "options", "option", "ways", "way", "methods", "method",
-    "points", "point", "things", "thing",
+    "days",
+    "day",
+    "weeks",
+    "week",
+    "months",
+    "month",
+    "years",
+    "year",
+    "hours",
+    "hour",
+    "minutes",
+    "minute",
+    "seconds",
+    "second",
+    "times",
+    "items",
+    "units",
+    "steps",
+    "lines",
+    "examples",
+    "people",
+    "person",
+    "users",
+    "user",
+    "customers",
+    "customer",
+    "projects",
+    "project",
+    "tasks",
+    "task",
+    "stories",
+    "story",
+    "options",
+    "option",
+    "ways",
+    "way",
+    "methods",
+    "method",
+    "points",
+    "point",
+    "things",
+    "thing",
 }
 # Phrase patterns: "5 человек", "3 месяца", "2 недели", "10 пунктов".
 # Detected by "<digits><space><size-unit>".
@@ -363,8 +619,7 @@ def _strip_urls(text: str) -> str:
     return cleaned
 
 
-def _compose_main_query(scored_entities: list[tuple[str, float]],
-                        max_words: int = 8) -> str:
+def _compose_main_query(scored_entities: list[tuple[str, float]], max_words: int = 8) -> str:
     """Compose main_query from top-scored entities.
 
     FIX 2026-06-07 (e2e Falcon 9): top-2 слишком узкое для factual queries.
@@ -390,10 +645,9 @@ def _compose_main_query(scored_entities: list[tuple[str, float]],
     return " ".join(words)
 
 
-def _compose_alt_queries(scored_entities: list[tuple[str, float]],
-                         main_query: str,
-                         original_query: str,
-                         max_alts: int = 3) -> list[str]:
+def _compose_alt_queries(
+    scored_entities: list[tuple[str, float]], main_query: str, original_query: str, max_alts: int = 3
+) -> list[str]:
     """Compose 1-3 alt queries from entity pairs (orthogonal angles)."""
     alts = []
     entities = [e for e, _ in scored_entities]
@@ -420,7 +674,7 @@ _LLM_IMPORT_TRIED = False
 _LLM_AVAILABLE = None
 
 
-def _try_llm_call(query: str) -> Optional[dict]:
+def _try_llm_call(query: str) -> dict | None:
     """Try LLM fallback. Returns None if LLM unavailable or fails."""
     global _LLM_IMPORT_TRIED, _LLM_AVAILABLE
 
@@ -429,6 +683,7 @@ def _try_llm_call(query: str) -> Optional[dict]:
         try:
             # Reuse the LLM verifier infrastructure
             from hermes_deepresearch import _get_llm_verifier
+
             _LLM_AVAILABLE = _get_llm_verifier
         except (ImportError, Exception):
             _LLM_AVAILABLE = None
@@ -445,6 +700,7 @@ def _try_llm_call(query: str) -> Optional[dict]:
 # ====================================================================
 # Main entry point
 # ====================================================================
+
 
 def adapt_query(query: str) -> dict:
     """Adapt a user query for the deep research pipeline.
@@ -464,15 +720,18 @@ def adapt_query(query: str) -> dict:
     # 1. Passthrough for short queries
     word_count = len(query.split())
     if word_count <= 10:
-        return _enrich_with_confirmation({
-            "raw_query": query,  # used by build_search_plan_preview()
-            "main_query": query.strip(),
-            "alt_queries": [],
-            "language": detect_language(query),
-            "extracted_entities": [],
-            "rationale": f"Query is short ({word_count} words), no adaptation needed",
-            "adaptation_method": "passthrough",
-        }, query)
+        return _enrich_with_confirmation(
+            {
+                "raw_query": query,  # used by build_search_plan_preview()
+                "main_query": query.strip(),
+                "alt_queries": [],
+                "language": detect_language(query),
+                "extracted_entities": [],
+                "rationale": f"Query is short ({word_count} words), no adaptation needed",
+                "adaptation_method": "passthrough",
+            },
+            query,
+        )
 
     # 2. Extract entities
     entities = _extract_entities_combined(query)
@@ -511,18 +770,18 @@ def adapt_query(query: str) -> dict:
             first_words = _strip_urls(query)
         # Take first 8 words again after URL-strip
         first_words = " ".join(first_words.split()[:8])
-        return _enrich_with_confirmation({
-            "raw_query": query,
-            "main_query": first_words,
-            "alt_queries": [],
-            "language": detect_language(query),
-            "extracted_entities": entities_kept,
-            "rationale": (
-                f"Deterministic extraction found 0 entities; "
-                f"used raw query prefix"
-            ),
-            "adaptation_method": "deterministic",  # degraded, not llm
-        }, query)
+        return _enrich_with_confirmation(
+            {
+                "raw_query": query,
+                "main_query": first_words,
+                "alt_queries": [],
+                "language": detect_language(query),
+                "extracted_entities": entities_kept,
+                "rationale": ("Deterministic extraction found 0 entities; used raw query prefix"),
+                "adaptation_method": "deterministic",  # degraded, not llm
+            },
+            query,
+        )
 
     # 5. Compose main_query (works for 1+ entities)
     main_query = _compose_main_query(scored)
@@ -535,18 +794,21 @@ def adapt_query(query: str) -> dict:
     # Cap at 3
     alt_queries = alt_queries[:3]
 
-    return _enrich_with_confirmation({
-        "raw_query": query,
-        "main_query": main_query,
-        "alt_queries": alt_queries,
-        "language": detect_language(query),
-        "extracted_entities": entities_kept,
-        "rationale": (
-            f"Extracted {len(entities_kept)} entities from {word_count}-word query; "
-            f"composed main_query from top 2 by score"
-        ),
-        "adaptation_method": "deterministic",
-    }, query)
+    return _enrich_with_confirmation(
+        {
+            "raw_query": query,
+            "main_query": main_query,
+            "alt_queries": alt_queries,
+            "language": detect_language(query),
+            "extracted_entities": entities_kept,
+            "rationale": (
+                f"Extracted {len(entities_kept)} entities from {word_count}-word query; "
+                f"composed main_query from top 2 by score"
+            ),
+            "adaptation_method": "deterministic",
+        },
+        query,
+    )
 
 
 # ====================================================================
@@ -580,9 +842,9 @@ def _tokenize(s: str) -> list[str]:
     return [t.lower() for t in _WORD_RE.findall(s)]
 
 
-def _compute_diff_terms(raw_query: str,
-                        main_query: str,
-                        extracted_entities: list[str]) -> tuple[list[str], list[str]]:
+def _compute_diff_terms(
+    raw_query: str, main_query: str, extracted_entities: list[str]
+) -> tuple[list[str], list[str]]:
     """Compute added and dropped terms between raw and adapted main_query.
 
     dropped_terms: content tokens present in raw_query but not in main_query.
@@ -607,11 +869,13 @@ def _compute_diff_terms(raw_query: str,
     return dropped, added
 
 
-def _compute_adaptation_confidence(adaptation_method: str,
-                                   raw_query: str,
-                                   main_query: str,
-                                   entities_kept: list[str],
-                                   extracted_entities_raw: list[str] | None = None) -> float:
+def _compute_adaptation_confidence(
+    adaptation_method: str,
+    raw_query: str,
+    main_query: str,
+    entities_kept: list[str],
+    extracted_entities_raw: list[str] | None = None,
+) -> float:
     """Estimate confidence in the adaptation.
 
     Returns 0.0-1.0. Lower when:
@@ -672,9 +936,7 @@ def _check_confirmation_triggers(
 
     # Trigger 1: long multi-aspect query
     if word_count > _CONFIRMATION_LONG_QUERY_WORDS:
-        reasons.append(
-            f"long_query:{word_count}_words"
-        )
+        reasons.append(f"long_query:{word_count}_words")
 
     # Trigger 2: zero entities (degraded deterministic)
     if adaptation_method == "deterministic" and len(extracted_entities) == 0:
@@ -692,15 +954,11 @@ def _check_confirmation_triggers(
         # Filter to "critical" dropped: length >= 3 (skip tiny noise like "vs")
         critical = [t for t in dropped_terms if len(t) >= 3]
         if critical:
-            reasons.append(
-                f"dropped_critical_terms:{','.join(critical[:5])}"
-            )
+            reasons.append(f"dropped_critical_terms:{','.join(critical[:5])}")
 
     # Trigger 5: low confidence
     if adaptation_confidence < _CONFIRMATION_CONFIDENCE_FLOOR:
-        reasons.append(
-            f"low_confidence:{adaptation_confidence:.2f}"
-        )
+        reasons.append(f"low_confidence:{adaptation_confidence:.2f}")
 
     # Trigger 6: time_range/category inferred (NOT YET IMPLEMENTED in v1.0.1).
     # Phase C (retrieval-routing) will populate these fields. Until then,
@@ -805,7 +1063,7 @@ def build_search_plan_preview(adapted: dict) -> str:
     lines: list[str] = []
     lines.append("Я понял задачу так:")
     lines.append("")
-    lines.append(f"**Цель:** найти источники по запросу пользователя.")
+    lines.append("**Цель:** найти источники по запросу пользователя.")
     lines.append(f"**Исходный запрос:** {raw}")
     lines.append("")
     lines.append(f"**Основной запрос:** {main or '(пусто)'}")
@@ -863,7 +1121,7 @@ def build_search_plan_preview(adapted: dict) -> str:
 
     if needs:
         lines.append("")
-        lines.append(f"**Требуется подтверждение:** да")
+        lines.append("**Требуется подтверждение:** да")
         lines.append(f"**Причины:** {'; '.join(reasons)}")
         lines.append("")
         lines.append("Действия:")
@@ -872,7 +1130,7 @@ def build_search_plan_preview(adapted: dict) -> str:
         lines.append("3. EDIT_QUERY_PLAN: <новые параметры>")
     else:
         lines.append("")
-        lines.append(f"**Требуется подтверждение:** нет (риск низкий, ищу автоматически).")
+        lines.append("**Требуется подтверждение:** нет (риск низкий, ищу автоматически).")
 
     return "\n".join(lines)
 
@@ -883,6 +1141,7 @@ def build_search_plan_preview(adapted: dict) -> str:
 
 if __name__ == "__main__":
     import sys as _sys
+
     if len(_sys.argv) < 2:
         print("Usage: python query_adaptation.py '<query>'")
         _sys.exit(1)

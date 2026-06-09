@@ -50,7 +50,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # --- public constants -------------------------------------------------------
 
 # Verdict types (mirror hermes_deepresearch.LLMVerifier)
@@ -75,11 +74,13 @@ MAX_CLAIM_PREVIEW_CHARS = 200  # в Coverage / Open Questions
 
 # --- exceptions -------------------------------------------------------------
 
+
 class SynthesisError(Exception):
     """Базовая ошибка synthesis layer."""
 
 
 # --- dataclasses ------------------------------------------------------------
+
 
 @dataclass
 class Citation:
@@ -91,6 +92,7 @@ class Citation:
     quote:     короткий excerpt из source text (≤ MAX_QUOTE_CHARS)
     source_index: оригинальный индекс в source_candidates (для traceability)
     """
+
     id: int
     url: str
     title: str
@@ -109,6 +111,7 @@ class Citation:
 @dataclass
 class Synthesis:
     """Финальный structured output synthesis layer."""
+
     answer_markdown: str
     citations: list[Citation] = field(default_factory=list)
     coverage: dict = field(default_factory=dict)
@@ -212,6 +215,7 @@ def _extract_quote(source: dict, max_chars: int = MAX_QUOTE_CHARS) -> str:
 
 # --- core: synthesis --------------------------------------------------------
 
+
 def _dedup_sources(source_candidates: list[dict]) -> list[dict]:
     """URL dedup: оставляем только первое вхождение каждого URL.
 
@@ -250,13 +254,15 @@ def _build_citation_table(
         url = src.get("url", "") or "?"
         title = src.get("title") or _url_to_title(url)
         quote = _extract_quote(src)
-        citations.append(Citation(
-            id=i,
-            url=url,
-            title=title,
-            quote=quote,
-            source_index=i - 1,  # 0-based index in unique_sources
-        ))
+        citations.append(
+            Citation(
+                id=i,
+                url=url,
+                title=title,
+                quote=quote,
+                source_index=i - 1,  # 0-based index in unique_sources
+            )
+        )
     return citations
 
 
@@ -298,9 +304,7 @@ def _collect_refuting_urls(result: dict) -> list[str]:
 
 def _collect_mismatch_urls(result: dict) -> list[str]:
     urls: list[str] = []
-    if "numeric_mismatch_sources" in result and isinstance(
-        result["numeric_mismatch_sources"], list
-    ):
+    if "numeric_mismatch_sources" in result and isinstance(result["numeric_mismatch_sources"], list):
         for entry in result["numeric_mismatch_sources"]:
             if isinstance(entry, (list, tuple)) and entry:
                 u = entry[0]
@@ -341,16 +345,20 @@ def _compute_coverage(
             supported += 1
         elif verdict in VERDICTS_CONFLICT:
             partial += 1
-            unsupported.append({
-                "claim": _truncate(claim, MAX_CLAIM_PREVIEW_CHARS),
-                "reason": "CONFLICTING" if verdict == VERDICT_CONFLICTING else "NUMERIC_MISMATCH",
-            })
+            unsupported.append(
+                {
+                    "claim": _truncate(claim, MAX_CLAIM_PREVIEW_CHARS),
+                    "reason": "CONFLICTING" if verdict == VERDICT_CONFLICTING else "NUMERIC_MISMATCH",
+                }
+            )
         else:
             # INSUFFICIENT, REFUTES, None
-            unsupported.append({
-                "claim": _truncate(claim, MAX_CLAIM_PREVIEW_CHARS),
-                "reason": verdict or "INSUFFICIENT",
-            })
+            unsupported.append(
+                {
+                    "claim": _truncate(claim, MAX_CLAIM_PREVIEW_CHARS),
+                    "reason": verdict or "INSUFFICIENT",
+                }
+            )
 
     score = round((supported + 0.5 * partial) / total, 4)
     return {
@@ -374,11 +382,7 @@ def _find_contradictions(results: list[dict]) -> list[dict]:
         elif verdict == VERDICT_NUMERIC_MISMATCH:
             urls = _collect_mismatch_urls(r)
         else:  # CONFLICTING: supporting + refuting/mismatch (обе стороны)
-            urls = (
-                _collect_supporting_urls(r)
-                + _collect_refuting_urls(r)
-                + _collect_mismatch_urls(r)
-            )
+            urls = _collect_supporting_urls(r) + _collect_refuting_urls(r) + _collect_mismatch_urls(r)
             # Dedupe, сохраняем порядок
             seen = set()
             deduped = []
@@ -387,11 +391,13 @@ def _find_contradictions(results: list[dict]) -> list[dict]:
                     seen.add(u)
                     deduped.append(u)
             urls = deduped
-        out.append({
-            "fact": _truncate(r.get("fact", ""), MAX_CLAIM_PREVIEW_CHARS),
-            "type": verdict,
-            "urls": urls,
-        })
+        out.append(
+            {
+                "fact": _truncate(r.get("fact", ""), MAX_CLAIM_PREVIEW_CHARS),
+                "type": verdict,
+                "urls": urls,
+            }
+        )
     return out
 
 
@@ -431,10 +437,7 @@ def _build_open_questions(
             if verdict == VERDICT_REFUTES:
                 q = f"Оспаривается: {_truncate(claim, MAX_CLAIM_PREVIEW_CHARS)}"
             else:
-                q = (
-                    f"Не подтверждено: "
-                    f"{_truncate(claim, MAX_CLAIM_PREVIEW_CHARS)}"
-                )
+                q = f"Не подтверждено: {_truncate(claim, MAX_CLAIM_PREVIEW_CHARS)}"
             out.append(q)
         if len(out) >= MAX_OPEN_QUESTIONS:
             break
@@ -442,6 +445,7 @@ def _build_open_questions(
 
 
 # --- markdown rendering -----------------------------------------------------
+
 
 def _build_url_to_id(citations: list[Citation]) -> dict[str, int]:
     """Map url → citation id (для inline markers)."""
@@ -493,9 +497,7 @@ def _render_markdown(
         refuting = _collect_refuting_urls(r)
         mismatch = _collect_mismatch_urls(r)
 
-        markers = _format_citation_markers(
-            supporting + refuting + mismatch, url_to_id
-        )
+        markers = _format_citation_markers(supporting + refuting + mismatch, url_to_id)
 
         verdict_label = {
             VERDICT_SUPPORTS: "✅ Подтверждено",
@@ -511,18 +513,11 @@ def _render_markdown(
             f"**Вердикт:** {verdict_label}{(' ' + markers) if markers else ''}\n"
         )
         if reasoning:
-            parts.append(
-                f"> {_md_escape(_truncate(reasoning, MAX_QUOTE_CHARS))}\n"
-            )
+            parts.append(f"> {_md_escape(_truncate(reasoning, MAX_QUOTE_CHARS))}\n")
         if refuting:
-            parts.append(
-                f"Опрошено: {_format_citation_markers(refuting, url_to_id)}\n"
-            )
+            parts.append(f"Опрошено: {_format_citation_markers(refuting, url_to_id)}\n")
         if mismatch:
-            parts.append(
-                f"Числовое расхождение: "
-                f"{_format_citation_markers(mismatch, url_to_id)}\n"
-            )
+            parts.append(f"Числовое расхождение: {_format_citation_markers(mismatch, url_to_id)}\n")
 
     # --- section 3: coverage
     if coverage.get("total", 0) > 0:
@@ -550,10 +545,7 @@ def _render_markdown(
             t = c.get("type", "")
             urls = c.get("urls", [])
             markers = _format_citation_markers(urls, url_to_id)
-            parts.append(
-                f"- **{t}**: {_md_escape(f)}"
-                f"{(' ' + markers) if markers else ''}\n"
-            )
+            parts.append(f"- **{t}**: {_md_escape(f)}{(' ' + markers) if markers else ''}\n")
 
     # --- section 5: open questions
     if open_questions:
@@ -569,9 +561,7 @@ def _render_markdown(
             url = c.url
             parts.append(f"- [{c.id}] [{title}]({url})\n")
             if c.quote:
-                parts.append(
-                    f"  > {_md_escape(_truncate(c.quote, MAX_QUOTE_CHARS))}\n"
-                )
+                parts.append(f"  > {_md_escape(_truncate(c.quote, MAX_QUOTE_CHARS))}\n")
 
     md = "".join(parts)
     if len(md) > MAX_MARKDOWN_CHARS:
@@ -580,6 +570,7 @@ def _render_markdown(
 
 
 # --- main: deterministic synthesize() ---------------------------------------
+
 
 def synthesize(
     query: str,
@@ -613,9 +604,7 @@ def synthesize(
     contradictions = _find_contradictions(results or [])
 
     # 5. Confidence
-    confidence = _compute_confidence(
-        coverage, contradictions, len(citations)
-    )
+    confidence = _compute_confidence(coverage, contradictions, len(citations))
 
     # 6. Open questions
     open_questions = _build_open_questions(claims or [], results or [])
@@ -733,12 +722,8 @@ def enrich_with_llm(
     valid_citation_ids = {c.id for c in base.citations}
     valid_urls = {c.url for c in base.citations if c.url and c.url != "?"}
 
-    facts_brief = "\n".join(
-        f"- {i+1}. {c}" for i, c in enumerate(claims[:20])
-    )
-    citations_brief = "\n".join(
-        f"[{c.id}] {c.title} — {c.url}" for c in base.citations[:30]
-    )
+    facts_brief = "\n".join(f"- {i + 1}. {c}" for i, c in enumerate(claims[:20]))
+    citations_brief = "\n".join(f"[{c.id}] {c.title} — {c.url}" for c in base.citations[:30])
     prompt = (
         "You are a research synthesis writer. Rewrite the following "
         "deterministic answer into a clean, well-structured Russian "
@@ -771,9 +756,7 @@ def enrich_with_llm(
     enriched = enriched_raw.strip()
 
     # Failure 4: post-validate
-    valid, reason = _validate_enriched_markdown(
-        enriched, valid_citation_ids, valid_urls
-    )
+    valid, reason = _validate_enriched_markdown(enriched, valid_citation_ids, valid_urls)
     if not valid:
         base.llm_fallback_reason = f"post-validation failed: {reason}"
         return base

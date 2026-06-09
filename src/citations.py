@@ -22,10 +22,10 @@ Public API:
 
 Spec: ~/.hermes/plans/ISSUES.md #019.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from evidence import EvidenceWindow
 from models import Claim
@@ -204,9 +204,7 @@ def find_span(claim: Claim, evidence_text: str) -> tuple[int, int]:
     return (-1, -1)
 
 
-def build_evidence_window(
-    claim: Claim, document: dict
-) -> Optional[EvidenceWindow]:
+def build_evidence_window(claim: Claim, document: dict) -> EvidenceWindow | None:
     """Build an `EvidenceWindow` for `claim` based on `document`.
 
     `document` is a dict produced by `_fetch_documents` (keys: `url`,
@@ -239,7 +237,7 @@ def build_evidence_window(
         # (only if we have a direct hit; otherwise just use claim.text itself
         # as a placeholder for display purposes).
         if end <= len(text):
-            window_text = text[start:start + len(claim.text)]
+            window_text = text[start : start + len(claim.text)]
         else:
             window_text = claim.text
 
@@ -253,9 +251,7 @@ def build_evidence_window(
     )
 
 
-def format_cited_claim(
-    claim: Claim, evidence_window: Optional[EvidenceWindow], doc_index: int
-) -> str:
+def format_cited_claim(claim: Claim, evidence_window: EvidenceWindow | None, doc_index: int) -> str:
     """Format a claim as `<text> [doc_<index>:<start>-<end>]`.
 
     `doc_index` is the 0-based position of the document in the original
@@ -269,10 +265,7 @@ def format_cited_claim(
     """
     if evidence_window is None:
         return claim.text
-    return (
-        f"{claim.text} [doc_{doc_index}:"
-        f"{evidence_window.offset_start}-{evidence_window.offset_end}]"
-    )
+    return f"{claim.text} [doc_{doc_index}:{evidence_window.offset_start}-{evidence_window.offset_end}]"
 
 
 def citation_stats(claims: list[Claim]) -> dict:
@@ -333,10 +326,7 @@ def assert_citations_complete(
             cited += 1
 
     if raise_on_missing and uncited_non_stub:
-        details = "\n".join(
-            f"  - claim={c.text[:80]!r} is_stub={c.is_stub}"
-            for c in uncited_non_stub[:5]
-        )
+        details = "\n".join(f"  - claim={c.text[:80]!r} is_stub={c.is_stub}" for c in uncited_non_stub[:5])
         raise AssertionError(
             f"{len(uncited_non_stub)} non-stub claim(s) lack evidence_window:\n"
             f"{details}"

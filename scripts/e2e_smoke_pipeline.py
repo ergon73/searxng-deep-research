@@ -22,6 +22,7 @@ What we verify:
 Usage:
   PYTHONPATH=src python3 scripts/e2e_smoke_pipeline.py
 """
+
 from __future__ import annotations
 
 import json
@@ -53,10 +54,10 @@ SYNTHETIC_FETCH_RESULTS = {
         "url": "https://en.wikipedia.org/wiki/Apple_Inc.",
         "title": "Apple Inc. - Wikipedia",
         "text": "Apple Inc. is an American multinational technology company. "
-                "It was founded by Steve Jobs, Steve Wozniak, and Ronald Wayne "
-                "on April 1, 1976. The company is headquartered in Cupertino, California. "
-                "Apple designs and sells consumer electronics, software, and online services. "
-                "Its best-known products include the iPhone, iPad, Mac, and Apple Watch. " * 5,
+        "It was founded by Steve Jobs, Steve Wozniak, and Ronald Wayne "
+        "on April 1, 1976. The company is headquartered in Cupertino, California. "
+        "Apple designs and sells consumer electronics, software, and online services. "
+        "Its best-known products include the iPhone, iPad, Mac, and Apple Watch. " * 5,
         "length": 800,
         "error": None,
     },
@@ -64,7 +65,7 @@ SYNTHETIC_FETCH_RESULTS = {
         "url": "https://www.apple.com/about",
         "title": "Apple - Official Site",
         "text": "Apple was founded in 1976. The company creates iPhone, iPad, Mac, "
-                "and other products. Innovation is at the core of everything we do. " * 3,
+        "and other products. Innovation is at the core of everything we do. " * 3,
         "length": 400,
         "error": None,
     },
@@ -82,8 +83,8 @@ def main() -> int:
     print(f"Query: {query}")
     print()
 
-    from research_runner import run_research
     import research_runner
+    from research_runner import run_research
 
     # Monkeypatch network layer.
     orig_dispatch = research_runner._dispatch_search_task
@@ -117,14 +118,14 @@ def main() -> int:
     print()
 
     if result.synthesis:
-        print(f"Synthesis:")
+        print("Synthesis:")
         print(f"  answer_markdown len: {len(result.synthesis.answer_markdown)}")
         print(f"  confidence: {result.synthesis.confidence}")
         print(f"  citations: {len(result.synthesis.citations)}")
         print()
 
     if result.review:
-        print(f"Review:")
+        print("Review:")
         print(f"  risk_level: {result.review.risk_level}")
         print(f"  risk_score: {result.review.risk_score}")
         print()
@@ -141,9 +142,7 @@ def main() -> int:
 
     for i, d in enumerate(docs):
         if "source_score" not in d:
-            failures.append(
-                f"NO_SOURCE_SCORE: doc {i} ({d.get('url', '?')}) lacks source_score"
-            )
+            failures.append(f"NO_SOURCE_SCORE: doc {i} ({d.get('url', '?')}) lacks source_score")
 
     if result.synthesis is None:
         failures.append("NO_SYNTHESIS: result.synthesis is None")
@@ -168,10 +167,7 @@ def main() -> int:
         "query": query,
         "status": result.status,
         "error": result.error,
-        "documents": [
-            {"url": d.get("url"), "source_score": d.get("source_score")}
-            for d in docs
-        ],
+        "documents": [{"url": d.get("url"), "source_score": d.get("source_score")} for d in docs],
         "synthesis_present": result.synthesis is not None,
         "review_present": result.review is not None,
         "failures": failures,

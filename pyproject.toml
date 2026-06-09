@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "searxng-deep-research"
-version = "0.8.1"
+version = "0.8.1.1"
 description = "Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,7 +45,15 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S", "B"]  # tests may have asserts, magic numbers
+# tests may have asserts, magic numbers, bare excepts, sys.path manipulation
+"tests/*" = ["S", "B", "E402"]  # E402: tests need sys.path.insert() before src imports
+# e2e smoke scripts hardcode /tmp output dirs (one-shot dev tooling, not user-facing)
+"scripts/e2e_*.py" = ["S108"]   # hardcoded /tmp path is intentional for smoke traces
+# S310 false-positives guarded at function level by _is_safe_fetch_url() / _safe_urlopen()
+#   (see tests/test_url_safety.py for proof). S310 cannot infer our custom SafeRedirectHandler.
+"src/hermes_deepresearch.py" = ["S310"]
+"src/hermes_searxng.py" = ["S310"]
+"src/llm_verifier.py" = ["S310"]
 
 # === Pytest config ===
 [tool.pytest.ini_options]

@@ -26,19 +26,20 @@ Security:
   2. /opt/searxng/.env_llm (если существует)
   3. RuntimeError если ни то, ни другое
 """
+
+import json
 import os
 import re
-import json
-import time
 import socket
-import urllib.request
+import time
 import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Optional
 
 # Skill 6.4: evidence window extraction. Pure-function, no LLM/network.
 try:
-    from evidence import extract_windows, windows_to_blob, EvidenceWindow
+    from evidence import EvidenceWindow, extract_windows, windows_to_blob
+
     _HAS_EVIDENCE = True
 except ImportError:
     _HAS_EVIDENCE = False
@@ -51,10 +52,10 @@ DEFAULT_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
 # (429/5xx/timeout) but NOT on schema errors (those are our bug, not the model's).
 # Override with env LLM_MODEL_CHAIN=comma,separated,ids for ad-hoc experiments.
 DEFAULT_MODEL_CHAIN = (
-    "qwen/qwen3-235b-a22b-2507",                    # primary: Instruct, $0.09/$0.10, 262K ctx
+    "qwen/qwen3-235b-a22b-2507",  # primary: Instruct, $0.09/$0.10, 262K ctx
     "mistralai/mistral-small-3.2-24b-instruct:free",  # free fallback #1
-    "google/gemini-2.0-flash-exp:free",               # free fallback #2 (structured)
-    "meta-llama/llama-3.1-8b-instruct:free",          # last resort (legacy default)
+    "google/gemini-2.0-flash-exp:free",  # free fallback #2 (structured)
+    "meta-llama/llama-3.1-8b-instruct:free",  # last resort (legacy default)
 )
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 ENV_FILE = Path("/opt/searxng/.env_llm")
@@ -164,9 +165,9 @@ class LLMVerifier:
 
     def __init__(
         self,
-        model: Optional[str] = None,
+        model: str | None = None,
         max_retries: int = 2,
-        model_chain: Optional[list] = None,
+        model_chain: list | None = None,
     ):
         self.api_key = _load_api_key()
         # If explicit model given, use it (single-model mode, backward-compat).
@@ -233,7 +234,7 @@ class LLMVerifier:
                         # Don't try other models, surface immediately.
                         raise
                     if attempt < self.max_retries:
-                        time.sleep(2 ** attempt)
+                        time.sleep(2**attempt)
                         continue
                     # Exhausted retries on this model → try next.
                     break
@@ -258,10 +259,10 @@ class LLMVerifier:
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     return json.loads(r.read().decode("utf-8"))
-            except (urllib.error.HTTPError, urllib.error.URLError, socket.timeout) as e:
+            except (TimeoutError, urllib.error.HTTPError, urllib.error.URLError) as e:
                 last_err = e
                 if attempt < self.max_retries:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     continue
                 raise
         # Should not reach here
@@ -295,9 +296,7 @@ class LLMVerifier:
         if not _HAS_EVIDENCE:
             # Fallback: old behaviour
             return "\n".join(
-                f'- {_sanitize(s.get("url", "?"), 200)}: '
-                f'{_sanitize(s.get("text", ""), 500)}'
-                for s in sources
+                f"- {_sanitize(s.get('url', '?'), 200)}: {_sanitize(s.get('text', ''), 500)}" for s in sources
             )
 
         rendered = []
@@ -305,7 +304,7 @@ class LLMVerifier:
             url = _sanitize(s.get("url", "?"), 200)
             text = s.get("text", "")
             if not text:
-                rendered.append(f'- {url}: (empty source)')
+                rendered.append(f"- {url}: (empty source)")
                 continue
 
             # Collect windows from all facts for this source.
@@ -313,7 +312,8 @@ class LLMVerifier:
             seen_offsets: set[tuple[int, int]] = set()
             for fact in facts:
                 wins = extract_windows(
-                    text, fact,
+                    text,
+                    fact,
                     window_size=per_source_window_size,
                     max_windows=2,
                 )
@@ -327,11 +327,9 @@ class LLMVerifier:
             # Sort by match_score desc, then by offset_start (stable).
             all_windows.sort(key=lambda w: (-w.match_score, w.offset_start))
 
-            blob = windows_to_blob(
-                all_windows, max_total_chars=per_source_max_total
-            )
+            blob = windows_to_blob(all_windows, max_total_chars=per_source_max_total)
             blob = _sanitize(blob, per_source_max_total)
-            rendered.append(f'- {url}: {blob}')
+            rendered.append(f"- {url}: {blob}")
 
         return "\n".join(rendered)
 
@@ -369,7 +367,7 @@ class LLMVerifier:
                 for f in facts
             ]
 
-        facts_block = "\n".join(f'{i+1}. "{_sanitize(f, 200)}"' for i, f in enumerate(facts))
+        facts_block = "\n".join(f'{i + 1}. "{_sanitize(f, 200)}"' for i, f in enumerate(facts))
         # Skill 6.4: extract evidence windows per source instead of feeding
         # the LLM the first 500 chars. The first 500 chars often don't
         # contain the claim, leading to false INSUFFICIENT verdicts.
@@ -404,8 +402,13 @@ class LLMVerifier:
             model_used, resp = self._call_with_fallback(body, timeout=20.0)
             self.model = model_used  # track which model succeeded (for debugging)
             content = resp["choices"][0]["message"]["content"].strip()
-        except (urllib.error.HTTPError, urllib.error.URLError, socket.timeout,
-                json.JSONDecodeError, KeyError) as e:
+        except (
+            TimeoutError,
+            urllib.error.HTTPError,
+            urllib.error.URLError,
+            json.JSONDecodeError,
+            KeyError,
+        ) as e:
             llm_error = f"{type(e).__name__}: {e}"
             return [
                 {
@@ -446,24 +449,28 @@ class LLMVerifier:
         for i, fact in enumerate(facts):
             match = next((r for r in results_raw if r.get("index") == i + 1), None)
             if not match:
-                out.append({
-                    "fact": fact,
-                    "verdict": VERDICT_INSUFFICIENT,
-                    "llm_verified": False,
-                    "llm_refuted": False,
-                    "llm_error": "no LLM result for this fact",
-                    "reasoning": "",
-                })
+                out.append(
+                    {
+                        "fact": fact,
+                        "verdict": VERDICT_INSUFFICIENT,
+                        "llm_verified": False,
+                        "llm_refuted": False,
+                        "llm_error": "no LLM result for this fact",
+                        "reasoning": "",
+                    }
+                )
                 continue
             verdict = _normalize_verdict(match.get("verdict", ""))
-            out.append({
-                "fact": fact,
-                "verdict": verdict,
-                "llm_verified": verdict == VERDICT_SUPPORTS,
-                "llm_refuted": verdict == VERDICT_REFUTES,
-                "llm_error": None,
-                "reasoning": (match.get("reasoning", "") or "")[:200],
-            })
+            out.append(
+                {
+                    "fact": fact,
+                    "verdict": verdict,
+                    "llm_verified": verdict == VERDICT_SUPPORTS,
+                    "llm_refuted": verdict == VERDICT_REFUTES,
+                    "llm_error": None,
+                    "reasoning": (match.get("reasoning", "") or "")[:200],
+                }
+            )
 
         return out
 
@@ -506,18 +513,21 @@ class LLMVerifier:
         results = self.verify_facts_batch(
             facts=[claim],
             source_candidates=[
-                {"url": e.get("url", "?"), "text": e.get("text", "")}
-                for e in evidence_blocks
+                {"url": e.get("url", "?"), "text": e.get("text", "")} for e in evidence_blocks
             ],
         )
-        return results[0] if results else {
-            "fact": claim,
-            "verdict": VERDICT_INSUFFICIENT,
-            "llm_verified": False,
-            "llm_refuted": False,
-            "llm_error": "empty batch result",
-            "reasoning": "",
-        }
+        return (
+            results[0]
+            if results
+            else {
+                "fact": claim,
+                "verdict": VERDICT_INSUFFICIENT,
+                "llm_verified": False,
+                "llm_refuted": False,
+                "llm_error": "empty batch result",
+                "reasoning": "",
+            }
+        )
 
 
 # Self-test
@@ -533,5 +543,7 @@ if __name__ == "__main__":
 
     for name, claim, evidence in test_cases:
         result = v.verify_claim_against_evidence(claim, [{"url": "test", "text": evidence}])
-        print(f"  {name}: verdict={result['verdict']}, verified={result['llm_verified']}, error={result.get('llm_error')}")
+        print(
+            f"  {name}: verdict={result['verdict']}, verified={result['llm_verified']}, error={result.get('llm_error')}"
+        )
         time.sleep(1)  # rate limit courtesy

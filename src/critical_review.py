@@ -34,10 +34,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
 
-from synthesis import Synthesis, Citation, VERDICT_SUPPORTS, VERDICT_REFUTES
-
+from synthesis import VERDICT_REFUTES, VERDICT_SUPPORTS, Citation, Synthesis
 
 # --- public constants -------------------------------------------------------
 
@@ -88,11 +86,13 @@ VALID_CATEGORIES = {
 
 # --- exceptions -------------------------------------------------------------
 
+
 class CriticalReviewError(Exception):
     """Базовая ошибка critical review."""
 
 
 # --- dataclasses ------------------------------------------------------------
+
 
 @dataclass
 class ReviewFlag:
@@ -103,6 +103,7 @@ class ReviewFlag:
     claim:       claim string (если применимо)
     source_urls: list of URLs involved
     """
+
     severity: str
     category: str
     message: str
@@ -128,6 +129,7 @@ class ReviewResult:
     recommendations:       list[str] — human-readable suggestions
     confidence_adjustment: float ≤ 0 (delta to apply to synthesis.confidence)
     """
+
     flags: list[ReviewFlag] = field(default_factory=list)
     risk_score: float = 0.0
     risk_level: str = SEVERITY_LOW
@@ -212,6 +214,7 @@ def _source_url(source: dict) -> str:
 
 # --- Check 1: Numeric consistency -------------------------------------------
 
+
 def check_numeric_consistency(
     claims: list[str],
     source_candidates: list[dict],
@@ -252,6 +255,7 @@ def check_numeric_consistency(
         return _NUMBER_RE.sub("", text).lower().strip()
 
     from collections import defaultdict
+
     groups: dict[str, list[tuple[str, set[str]]]] = defaultdict(list)
     for c, nums in claim_nums:
         ctx = _normalize_context(c)
@@ -281,21 +285,24 @@ def check_numeric_consistency(
                 unsupported_numbers.add(num)
 
         if unsupported_numbers:
-            flags.append(ReviewFlag(
-                severity=SEVERITY_MEDIUM,
-                category=CAT_NUMERIC_CONSISTENCY,
-                message=(
-                    f"Numeric disagreement across related claims: "
-                    f"{sorted(all_numbers)} (unsupported by sources: "
-                    f"{sorted(unsupported_numbers)})"
-                ),
-                claim=ctx[:120],
-            ))
+            flags.append(
+                ReviewFlag(
+                    severity=SEVERITY_MEDIUM,
+                    category=CAT_NUMERIC_CONSISTENCY,
+                    message=(
+                        f"Numeric disagreement across related claims: "
+                        f"{sorted(all_numbers)} (unsupported by sources: "
+                        f"{sorted(unsupported_numbers)})"
+                    ),
+                    claim=ctx[:120],
+                )
+            )
 
     return flags[:MAX_FLAGS_PER_CHECK]
 
 
 # --- Check 2: Entity hallucination ------------------------------------------
+
 
 def check_entity_hallucination(
     claims: list[str],
@@ -342,20 +349,23 @@ def check_entity_hallucination(
             severity = SEVERITY_MEDIUM
             if _CITATION_MARKER_RE.search(c):
                 severity = SEVERITY_HIGH
-            flags.append(ReviewFlag(
-                severity=severity,
-                category=CAT_ENTITY_HALLUCINATION,
-                message=(
-                    f"Entity not grounded in any source: "
-                    f"{hallucinated[:5]}{'…' if len(hallucinated) > 5 else ''}"
-                ),
-                claim=c[:120],
-            ))
+            flags.append(
+                ReviewFlag(
+                    severity=severity,
+                    category=CAT_ENTITY_HALLUCINATION,
+                    message=(
+                        f"Entity not grounded in any source: "
+                        f"{hallucinated[:5]}{'…' if len(hallucinated) > 5 else ''}"
+                    ),
+                    claim=c[:120],
+                )
+            )
 
     return flags[:MAX_FLAGS_PER_CHECK]
 
 
 # --- Check 3: Self-contradiction --------------------------------------------
+
 
 def check_self_contradiction(
     results: list[dict],
@@ -381,15 +391,16 @@ def check_self_contradiction(
         has_support = bool(r.get("supporting_sources")) or bool(r.get("source_urls"))
         has_refute = bool(r.get("refuting_sources"))
         if verdict == "CONFLICTING" or (has_support and has_refute):
-            flags.append(ReviewFlag(
-                severity=SEVERITY_HIGH,
-                category=CAT_SELF_CONTRADICTION,
-                message=(
-                    f"Both supporting and refuting sources for same claim: "
-                    f"{(r.get('fact') or '')[:80]}"
-                ),
-                claim=(r.get("fact") or "")[:120],
-            ))
+            flags.append(
+                ReviewFlag(
+                    severity=SEVERITY_HIGH,
+                    category=CAT_SELF_CONTRADICTION,
+                    message=(
+                        f"Both supporting and refuting sources for same claim: {(r.get('fact') or '')[:80]}"
+                    ),
+                    claim=(r.get("fact") or "")[:120],
+                )
+            )
 
     # 2) Cross-fact: SUPPORTS для одного claim, REFUTES для другого claim
     # с похожим context
@@ -409,21 +420,21 @@ def check_self_contradiction(
             refutes[ctx] = r.get("fact", "")
 
     overlap = set(supports.keys()) & set(refutes.keys())
-    for ctx in list(overlap)[:MAX_FLAGS_PER_CHECK - len(flags)]:
-        flags.append(ReviewFlag(
-            severity=SEVERITY_MEDIUM,
-            category=CAT_SELF_CONTRADICTION,
-            message=(
-                f"Cross-claim contradiction on same topic: "
-                f"SUPPORTS vs REFUTES"
-            ),
-            claim=ctx,
-        ))
+    for ctx in list(overlap)[: MAX_FLAGS_PER_CHECK - len(flags)]:
+        flags.append(
+            ReviewFlag(
+                severity=SEVERITY_MEDIUM,
+                category=CAT_SELF_CONTRADICTION,
+                message=("Cross-claim contradiction on same topic: SUPPORTS vs REFUTES"),
+                claim=ctx,
+            )
+        )
 
     return flags[:MAX_FLAGS_PER_CHECK]
 
 
 # --- Check 4: Citation integrity --------------------------------------------
+
 
 def check_citation_integrity(
     synthesis: Synthesis,
@@ -451,36 +462,44 @@ def check_citation_integrity(
             try:
                 n = int(m.group(1))
             except ValueError:
-                flags.append(ReviewFlag(
-                    severity=SEVERITY_HIGH,
-                    category=CAT_CITATION_INTEGRITY,
-                    message=f"Non-integer citation marker: {m.group(0)}",
-                ))
+                flags.append(
+                    ReviewFlag(
+                        severity=SEVERITY_HIGH,
+                        category=CAT_CITATION_INTEGRITY,
+                        message=f"Non-integer citation marker: {m.group(0)}",
+                    )
+                )
                 continue
             if n not in valid_ids:
-                flags.append(ReviewFlag(
-                    severity=SEVERITY_HIGH,
-                    category=CAT_CITATION_INTEGRITY,
-                    message=f"Unknown citation id: [{n}] (valid: {sorted(valid_ids)})",
-                ))
+                flags.append(
+                    ReviewFlag(
+                        severity=SEVERITY_HIGH,
+                        category=CAT_CITATION_INTEGRITY,
+                        message=f"Unknown citation id: [{n}] (valid: {sorted(valid_ids)})",
+                    )
+                )
 
     # 2) Citation URLs: empty / "?"
     for c in synthesis.citations:
         if not isinstance(c, Citation):
             continue
         if not c.url or c.url == "?":
-            flags.append(ReviewFlag(
-                severity=SEVERITY_MEDIUM,
-                category=CAT_CITATION_INTEGRITY,
-                message=f"Citation [{c.id}] has empty URL",
-                source_urls=[c.url] if c.url else [],
-            ))
+            flags.append(
+                ReviewFlag(
+                    severity=SEVERITY_MEDIUM,
+                    category=CAT_CITATION_INTEGRITY,
+                    message=f"Citation [{c.id}] has empty URL",
+                    source_urls=[c.url] if c.url else [],
+                )
+            )
         elif not c.title and not c.url:
-            flags.append(ReviewFlag(
-                severity=SEVERITY_LOW,
-                category=CAT_CITATION_INTEGRITY,
-                message=f"Citation [{c.id}] has neither title nor url",
-            ))
+            flags.append(
+                ReviewFlag(
+                    severity=SEVERITY_LOW,
+                    category=CAT_CITATION_INTEGRITY,
+                    message=f"Citation [{c.id}] has neither title nor url",
+                )
+            )
 
     # 3) URLs в markdown: должен существовать в citations
     if synthesis.answer_markdown:
@@ -490,16 +509,19 @@ def check_citation_integrity(
             if url in ("?", ""):
                 continue
             if url not in citation_urls:
-                flags.append(ReviewFlag(
-                    severity=SEVERITY_HIGH,
-                    category=CAT_CITATION_INTEGRITY,
-                    message=f"URL in markdown not in citation table: {url}",
-                ))
+                flags.append(
+                    ReviewFlag(
+                        severity=SEVERITY_HIGH,
+                        category=CAT_CITATION_INTEGRITY,
+                        message=f"URL in markdown not in citation table: {url}",
+                    )
+                )
 
     return flags[:MAX_FLAGS_PER_CHECK]
 
 
 # --- Check 5: Temporal consistency ------------------------------------------
+
 
 def check_temporal_consistency(
     claims: list[str],
@@ -548,35 +570,38 @@ def check_temporal_consistency(
             # Anachronism: claim year > max source year + 1 (будущее)
             for cy in claim_years:
                 if cy > max_src_year + 1:
-                    flags.append(ReviewFlag(
-                        severity=SEVERITY_MEDIUM,
-                        category=CAT_TEMPORAL_CONSISTENCY,
-                        message=(
-                            f"Claim mentions {cy} but source max year is "
-                            f"{max_src_year} (anachronism)"
-                        ),
-                        claim=c[:120],
-                        source_urls=[url] if url else [],
-                    ))
+                    flags.append(
+                        ReviewFlag(
+                            severity=SEVERITY_MEDIUM,
+                            category=CAT_TEMPORAL_CONSISTENCY,
+                            message=(
+                                f"Claim mentions {cy} but source max year is {max_src_year} (anachronism)"
+                            ),
+                            claim=c[:120],
+                            source_urls=[url] if url else [],
+                        )
+                    )
                     break  # один flag per (claim, source)
                 # Past: claim year << min source year (suspicious)
                 elif cy < min_src_year - 5:
-                    flags.append(ReviewFlag(
-                        severity=SEVERITY_LOW,
-                        category=CAT_TEMPORAL_CONSISTENCY,
-                        message=(
-                            f"Claim mentions {cy} but source min year is "
-                            f"{min_src_year} (unusually old)"
-                        ),
-                        claim=c[:120],
-                        source_urls=[url] if url else [],
-                    ))
+                    flags.append(
+                        ReviewFlag(
+                            severity=SEVERITY_LOW,
+                            category=CAT_TEMPORAL_CONSISTENCY,
+                            message=(
+                                f"Claim mentions {cy} but source min year is {min_src_year} (unusually old)"
+                            ),
+                            claim=c[:120],
+                            source_urls=[url] if url else [],
+                        )
+                    )
                     break
 
     return flags[:MAX_FLAGS_PER_CHECK]
 
 
 # --- Aggregation ------------------------------------------------------------
+
 
 def _compute_risk_score(flags: list[ReviewFlag]) -> float:
     """risk_score = min(1.0, sum(weights) / RISK_NORMALIZATION)."""
@@ -654,6 +679,7 @@ def _compute_confidence_adjustment(risk_score: float) -> float:
 
 # --- main API ---------------------------------------------------------------
 
+
 def review(
     synthesis: Synthesis,
     claims: list[str] | None = None,
@@ -680,51 +706,61 @@ def review(
     try:
         flags.extend(check_numeric_consistency(claims or [], source_candidates or []))
     except Exception as e:
-        flags.append(ReviewFlag(
-            severity=SEVERITY_LOW,
-            category=CAT_NUMERIC_CONSISTENCY,
-            message=f"check_numeric_consistency failed: {type(e).__name__}: {e}",
-        ))
+        flags.append(
+            ReviewFlag(
+                severity=SEVERITY_LOW,
+                category=CAT_NUMERIC_CONSISTENCY,
+                message=f"check_numeric_consistency failed: {type(e).__name__}: {e}",
+            )
+        )
 
     # 2) Entity hallucination (needs claims + sources)
     try:
         flags.extend(check_entity_hallucination(claims or [], source_candidates or []))
     except Exception as e:
-        flags.append(ReviewFlag(
-            severity=SEVERITY_LOW,
-            category=CAT_ENTITY_HALLUCINATION,
-            message=f"check_entity_hallucination failed: {type(e).__name__}: {e}",
-        ))
+        flags.append(
+            ReviewFlag(
+                severity=SEVERITY_LOW,
+                category=CAT_ENTITY_HALLUCINATION,
+                message=f"check_entity_hallucination failed: {type(e).__name__}: {e}",
+            )
+        )
 
     # 3) Self-contradiction (needs results)
     try:
         flags.extend(check_self_contradiction(results or []))
     except Exception as e:
-        flags.append(ReviewFlag(
-            severity=SEVERITY_LOW,
-            category=CAT_SELF_CONTRADICTION,
-            message=f"check_self_contradiction failed: {type(e).__name__}: {e}",
-        ))
+        flags.append(
+            ReviewFlag(
+                severity=SEVERITY_LOW,
+                category=CAT_SELF_CONTRADICTION,
+                message=f"check_self_contradiction failed: {type(e).__name__}: {e}",
+            )
+        )
 
     # 4) Citation integrity (needs synthesis only)
     try:
         flags.extend(check_citation_integrity(synthesis))
     except Exception as e:
-        flags.append(ReviewFlag(
-            severity=SEVERITY_LOW,
-            category=CAT_CITATION_INTEGRITY,
-            message=f"check_citation_integrity failed: {type(e).__name__}: {e}",
-        ))
+        flags.append(
+            ReviewFlag(
+                severity=SEVERITY_LOW,
+                category=CAT_CITATION_INTEGRITY,
+                message=f"check_citation_integrity failed: {type(e).__name__}: {e}",
+            )
+        )
 
     # 5) Temporal consistency (needs claims + sources)
     try:
         flags.extend(check_temporal_consistency(claims or [], source_candidates or []))
     except Exception as e:
-        flags.append(ReviewFlag(
-            severity=SEVERITY_LOW,
-            category=CAT_TEMPORAL_CONSISTENCY,
-            message=f"check_temporal_consistency failed: {type(e).__name__}: {e}",
-        ))
+        flags.append(
+            ReviewFlag(
+                severity=SEVERITY_LOW,
+                category=CAT_TEMPORAL_CONSISTENCY,
+                message=f"check_temporal_consistency failed: {type(e).__name__}: {e}",
+            )
+        )
 
     # Cap total
     flags = flags[:MAX_FLAGS_TOTAL]

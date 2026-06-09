@@ -990,6 +990,83 @@ def _is_negated(fact: str, text: str) -> bool:
     return False
 
 
+# v0.8.2-B1 (reviewer-9): whitelist helper.
+# Принимает только URL, которые canonicalize к одному из source_candidates.
+# Возвращает ОРИГИНАЛЬНЫЕ URL (не canonical), в порядке input.
+# Это критично для citation integrity: LLM может вернуть любой URL,
+# мы принимаем только те, что совпадают с реально прочитанными sources.
+def _filter_source_urls_to_candidates(
+    raw_urls: list[str],
+    source_candidates: list[dict],
+) -> list[str]:
+    """
+    Returns subset of raw_urls that canonicalize to one of source_candidates.
+
+    Each accepted URL is the ORIGINAL raw URL (not the canonical form),
+    so downstream citation storage uses what the LLM actually emitted
+    (preserving query params, fragments, etc. that are real).
+
+    Defensive rules:
+      - Skip empty / non-string entries
+      - Skip URLs that don't parse (urlsplit fails)
+      - Skip URLs whose scheme is not http/https
+      - Skip URLs whose canonical form is empty
+      - Preserve order, dedup within the result
+    """
+    if not raw_urls or not source_candidates:
+        return []
+
+    # Pre-compute canonical forms of candidates (deduped)
+    cand_canonicals: set[str] = set()
+    for c in source_candidates:
+        c_url = c.get("url", "") if isinstance(c, dict) else ""
+        if not c_url:
+            continue
+        try:
+            cn = canonical_url(c_url)
+        except Exception:  # noqa: S112 — defensive: skip malformed URL
+            continue
+        if cn:
+            cand_canonicals.add(cn)
+
+    if not cand_canonicals:
+        return []
+
+    accepted: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_urls:
+        if not isinstance(raw, str):
+            continue
+        u = raw.strip()
+        if not u:
+            continue
+        # Parse to validate scheme
+        try:
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(u)
+        except Exception:  # noqa: S112 — defensive: skip unparsable
+            continue
+        if parts.scheme not in ("http", "https"):
+            continue
+        if not parts.netloc:
+            continue
+        try:
+            cn = canonical_url(u)
+        except Exception:  # noqa: S112 — defensive: skip unparsable
+            continue
+        if not cn or cn not in cand_canonicals:
+            continue
+        # Dedup within accepted list
+        if cn in seen:
+            continue
+        seen.add(cn)
+        accepted.append(u)
+        if len(accepted) >= 5:
+            break
+    return accepted
+
+
 def verify_sources(
     top1: dict,
     other_sources: list[dict],
@@ -1012,6 +1089,8 @@ def verify_sources(
             "verification_details": [],
             "llm_enhanced": False,
             "llm_verified_count": 0,
+            "llm_weak_count": 0,  # v0.8.2-B1
+            "llm_unlinked_refute_count": 0,  # v0.8.2-B1
             "llm_latency": 0.0,
             "llm_error": None,
         }
@@ -1027,6 +1106,8 @@ def verify_sources(
             "verification_details": [],
             "llm_enhanced": False,
             "llm_verified_count": 0,
+            "llm_weak_count": 0,  # v0.8.2-B1
+            "llm_unlinked_refute_count": 0,  # v0.8.2-B1
             "llm_latency": 0.0,
             "llm_error": None,
         }
@@ -1107,44 +1188,83 @@ def verify_sources(
     # Conditional LLM-enhancement: если rate < 70% и есть unverified
     llm_enhanced = False
     llm_verified_count = 0
+    llm_weak_count = 0  # v0.8.2-B1: SUPPORTS без valid source_urls → WEAK_SUPPORT (not counted as verified)
+    llm_unlinked_refute_count = 0  # REFUTES без valid source_urls (recorded but not cited)
     llm_latency = 0.0
     llm_error = None  # v0.8.2 (Phase 4): exposed in return dict, not swallowed
 
     if use_llm and rate < LLM_VERIFY_THRESHOLD:
         unverified = [d for d in details if not d["verified"]]
         if unverified:
+            # v0.8.2-B1 (reviewer-9): source_candidates — реально прочитанные sources.
+            # LLM будет сравнивать факты ТОЛЬКО с ними, а его source_urls
+            # пройдут whitelist через _filter_source_urls_to_candidates.
+            llm_source_candidates = [
+                {"url": s.get("url", "?"), "text": s.get("text", "")[:2000]}
+                for s in other_sources
+                if not s.get("error")
+            ][:3]
             try:
                 verifier = LLMVerifier()
                 t0 = time.time()
                 llm_results = verifier.verify_facts_batch(
                     facts=[d["fact"] for d in unverified],
-                    source_candidates=[
-                        {"url": s.get("url", "?"), "text": s.get("text", "")[:2000]}
-                        for s in other_sources
-                        if not s.get("error")
-                    ][:3],
+                    source_candidates=llm_source_candidates,
                 )
                 llm_latency = round(time.time() - t0, 2)
 
-                # Map back — use new verdict enum (DR §10)
+                # Map back — apply v0.8.2-B1 source_urls whitelist.
+                # SUPPORTS only counts as verified if LLM cited at least one
+                # URL that canonicalizes to a real source_candidate.
+                # Otherwise → WEAK_SUPPORT (verified=False, does NOT increment
+                # verified_facts, does NOT increase verification_rate).
                 for d, lr in zip(unverified, llm_results, strict=False):
                     verdict = lr.get("verdict")
+                    raw_urls = lr.get("source_urls") or []
+                    accepted_urls = _filter_source_urls_to_candidates(raw_urls, llm_source_candidates)
                     if verdict == "SUPPORTS":
-                        d["verified"] = True
-                        d["verdict"] = "SUPPORTS"
-                        d["method"] = "llm"
-                        d["supporting_sources"].append(("llm_batch", 0, "llm"))
-                        llm_verified_count += 1
+                        if accepted_urls:
+                            # Valid: LLM cited a real source. Upgrade to verified.
+                            d["verified"] = True
+                            d["verdict"] = "SUPPORTS"
+                            d["method"] = "llm"
+                            d["source_urls"] = accepted_urls
+                            # supporting_sources заполняется ORIGINAL URLs (не canonical)
+                            for u in accepted_urls:
+                                d["supporting_sources"].append((u, 0.8, "llm+url"))
+                            llm_verified_count += 1
+                        else:
+                            # v0.8.2-B1: SUPPORTS без valid source_urls → WEAK_SUPPORT.
+                            # НЕ verified, НЕ llm_verified_count += 1.
+                            d["verified"] = False
+                            d["verdict"] = "WEAK_SUPPORT"
+                            d["method"] = "llm"
+                            d["source_urls"] = []
+                            d["llm_error"] = "SUPPORTS без валидных source_urls"
+                            llm_weak_count += 1
                     elif verdict == "REFUTES":
-                        d["verdict"] = "REFUTES"
-                        d["method"] = "llm"
-                        d["refuting_sources"].append("llm_batch")
+                        if accepted_urls:
+                            # Cited refutation: записываем URL как refuting source
+                            d["verdict"] = "REFUTES"
+                            d["method"] = "llm"
+                            d["source_urls"] = accepted_urls
+                            for u in accepted_urls:
+                                d["refuting_sources"].append(u)
+                        else:
+                            # v0.8.2-B1: REFUTES без valid source_urls — НЕ cited refutation.
+                            # verdict остаётся REFUTES (LLM видел), но URL не записывается.
+                            d["verdict"] = "REFUTES"
+                            d["method"] = "llm"
+                            d["source_urls"] = []
+                            d["llm_error"] = "REFUTES без валидных source_urls"
+                            llm_unlinked_refute_count += 1
                     # INSUFFICIENT or None → no change to d
                     # Propagate per-fact llm_error if set
-                    if lr.get("llm_error"):
+                    if lr.get("llm_error") and not d.get("llm_error"):
                         d["llm_error"] = lr["llm_error"]
 
-                # Recompute rate
+                # Recompute rate — WEAK_SUPPORT не увеличивает verified_count,
+                # поэтому rate может не подняться. Это by design.
                 verified_count = sum(1 for d in details if d["verified"])
                 rate = verified_count / total if total else 0.0
                 llm_enhanced = True
@@ -1160,6 +1280,8 @@ def verify_sources(
         "verification_details": details,
         "llm_enhanced": llm_enhanced,
         "llm_verified_count": llm_verified_count,
+        "llm_weak_count": llm_weak_count,  # v0.8.2-B1
+        "llm_unlinked_refute_count": llm_unlinked_refute_count,  # v0.8.2-B1
         "llm_latency": llm_latency,
         "llm_error": llm_error,  # v0.8.2 (Phase 4)
     }

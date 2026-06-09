@@ -69,6 +69,10 @@ _FALLBACK_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 VERDICT_SUPPORTS = "SUPPORTS"
 VERDICT_REFUTES = "REFUTES"
 VERDICT_INSUFFICIENT = "INSUFFICIENT"
+# v0.8.2-B1: WEAK_SUPPORT — SUPPORTS от LLM без валидных source_urls.
+# НЕ возвращается LLM напрямую — это caller-computed downgrade (см. hermes_deepresearch.verify_sources).
+# LLM schema enum остаётся без WEAK_SUPPORT (strict json_schema).
+VERDICT_WEAK_SUPPORT = "WEAK_SUPPORT"
 VALID_VERDICTS = {VERDICT_SUPPORTS, VERDICT_REFUTES, VERDICT_INSUFFICIENT}
 
 # Strict response schema (DR §11) — гарантирует структуру, не "any JSON"
@@ -457,10 +461,23 @@ class LLMVerifier:
                         "llm_refuted": False,
                         "llm_error": "no LLM result for this fact",
                         "reasoning": "",
+                        "source_urls": [],
                     }
                 )
                 continue
             verdict = _normalize_verdict(match.get("verdict", ""))
+            # v0.8.2-B1: extract raw source_urls from LLM response.
+            # Caller (verify_sources) applies whitelist against source_candidates.
+            raw_urls = match.get("source_urls") or []
+            if not isinstance(raw_urls, list):
+                raw_urls = []
+            # Defensive: keep only non-empty strings, trim, cap per-fact.
+            cleaned_urls: list[str] = []
+            for u in raw_urls:
+                if isinstance(u, str) and u.strip():
+                    cleaned_urls.append(u.strip()[:500])
+                if len(cleaned_urls) >= 10:
+                    break
             out.append(
                 {
                     "fact": fact,
@@ -469,6 +486,7 @@ class LLMVerifier:
                     "llm_refuted": verdict == VERDICT_REFUTES,
                     "llm_error": None,
                     "reasoning": (match.get("reasoning", "") or "")[:200],
+                    "source_urls": cleaned_urls,
                 }
             )
 
@@ -499,6 +517,7 @@ class LLMVerifier:
                 "llm_refuted": False,
                 "llm_error": "no claim",
                 "reasoning": "",
+                "source_urls": [],
             }
         if not evidence_blocks:
             return {
@@ -508,6 +527,7 @@ class LLMVerifier:
                 "llm_refuted": False,
                 "llm_error": "no evidence blocks",
                 "reasoning": "",
+                "source_urls": [],
             }
 
         results = self.verify_facts_batch(
@@ -516,18 +536,20 @@ class LLMVerifier:
                 {"url": e.get("url", "?"), "text": e.get("text", "")} for e in evidence_blocks
             ],
         )
-        return (
-            results[0]
-            if results
-            else {
+        first = results[0] if results else None
+        if not first:
+            return {
                 "fact": claim,
                 "verdict": VERDICT_INSUFFICIENT,
                 "llm_verified": False,
                 "llm_refuted": False,
                 "llm_error": "empty batch result",
                 "reasoning": "",
+                "source_urls": [],
             }
-        )
+        # v0.8.2-B1: propagate source_urls from batch.
+        first.setdefault("source_urls", [])
+        return first
 
 
 # Self-test

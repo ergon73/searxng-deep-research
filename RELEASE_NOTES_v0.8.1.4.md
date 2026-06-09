@@ -1,9 +1,9 @@
 # Release Notes — v0.8.1.4
 
 **Date:** 9 June 2026
-**Tag:** `v0.8.1.4` → `e36ee5e` (annotated tag, see `git tag -l 'v0.8.1.*'`)
+**Tag:** `v0.8.1.4` → this release commit (see `git tag -l 'v0.8.1.*'`)
 **Type:** Pre-v0.8.2 bugfix (eval correctness) + version/tag consistency
-**Diff vs v0.8.1.3:** 2 commits on main (`05e7554` + `e36ee5e`), no research logic change
+**Diff vs v0.8.1.3:** 3 commits on main — bugfix + version bump + this release-notes file
 
 ---
 
@@ -17,19 +17,30 @@ contained the raw URL.
 
 **No new pipeline stages, no new providers, no new dependencies.**
 
-Two commits:
+Three commits in this release:
 
-| SHA | Title | Purpose |
-|---|---|---|
-| `05e7554` | fix(eval): v0.8.1.4 canonical-dedup regression | Split `seen` into `seen_raw` + `seen_canon`; dedup checks before `seen.add(...)`; 5 new regression tests |
-| `e36ee5e` | docs: v0.8.1.4 release notes + v0.8.1.3 consistency fix | `pyproject.toml` 0.8.1.3→0.8.1.4 (closes version drift); `RELEASE_NOTES_v0.8.1.3.md` updated to reflect actual 2-commit v0.8.1.3 scope; this file created |
+1. `fix(eval): v0.8.1.4 canonical-dedup regression` — split `seen` into
+   `seen_raw` + `seen_canon`; dedup checks before `seen.add(...)`; 5 new
+   regression tests.
+2. `docs: v0.8.1.4 release notes + v0.8.1.3 consistency fix` — version
+   bump in `pyproject.toml` (0.8.1.3→0.8.1.4) and consistency fix to
+   the `v0.8.1.3` release notes (the earlier draft pointed to a
+   pre-bump commit).
+3. `docs: v0.8.1.4-final — README/AGENTS version + smoke fix +
+   release notes tag target` — README/AGENTS version synced to
+   v0.8.1.4; AGENTS smoke test now uses `research_runner.run_research()`
+   instead of legacy `hermes_deepresearch.deep_research()`; this file's
+   tag-target self-reference fixed.
 
-> **Note on tag target:** Earlier draft of this file (created during
-> commit `e36ee5e`) referenced `05e7554` as the tag target. That was
-> wrong: the version bump in `pyproject.toml` only landed in `e36ee5e`,
-> so a tag at `05e7554` would point to a commit that still claims
-> `0.8.1.3`. The canonical tag target is `e36ee5e`. This drift is what
-> the third external review caught in section 2.
+> **Note on tag target:** This file does not hardcode the release
+> commit SHA, because the SHA cannot be known until the commit is
+> made. The canonical way to identify the release commit is
+> `git tag -l 'v0.8.1.*'` (annotated tag) or
+> `git log --grep "v0.8.1.4"` (search by tag mention in commit
+> messages). The previous versions of this file attempted to
+> hardcode SHAs (`05e7554` then `e36ee5e`) and both were wrong:
+> `05e7554` predates the `pyproject.toml` version bump, and
+> `e36ee5e` predates the README/AGENTS/smoke fixes.
 
 ---
 

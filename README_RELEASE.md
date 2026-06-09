@@ -1,6 +1,6 @@
 # Release artifact — verification guide
 
-Этот архив — reproducible release artifact проекта hermes-deepresearch,
+Этот архив — reproducible release artifact проекта searxng-deep-research,
 собранный через `release_packaging.build_release()`.
 
 ## Что внутри
@@ -48,7 +48,7 @@ cd <root_name>  # имя из manifest
 TMPDIR=$(mktemp -d)
 cd "$TMPDIR"
 PYTHONPATH=/path/to/unpacked/src python3 -m pytest /path/to/unpacked/tests/
-# Ожидаем: 393/393 passed
+# Ожидаем: 648/648 passed
 ```
 
 ## Reproducibility

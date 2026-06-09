@@ -2,7 +2,7 @@
 
 Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check.
 
-**Version:** v0.8.1 (8 June 2026)
+**Version:** v0.8.1.2 (9 June 2026)
 **Status:** hardening release. See `.hermes/plans/ISSUES.md` and `SECURITY.md` for current state.
 **Recommended entrypoint:** `src/research_runner.py::run_research()` / `deep_research_v2()`.
 **Legacy entrypoint:** `src/hermes_deepresearch.py::deep_research()` (untouched, still works).
@@ -20,7 +20,7 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 - `src/hermes_searxng.py` — SearXNG JSON helper
 - `scripts/e2e_falcon9.py` — 8-stage end-to-end smoke (~2s)
 - `scripts/eval.py` + `data/eval_set.json` — synthetic eval set
-- `tests/` — 586 portable tests, run with `PYTHONPATH=src python3 -m pytest`
+- `tests/` — 648 portable tests, run with `PYTHONPATH=src python3 -m pytest`
 
 ## Read these first
 

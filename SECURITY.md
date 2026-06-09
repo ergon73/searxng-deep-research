@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes security policy for the **deep-research-project** — a local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check.
+This document describes security policy for the **searxng-deep-research** — a local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check.
 
 ## Reporting vulnerabilities
 

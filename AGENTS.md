@@ -4,8 +4,8 @@ Project rules for any coding agent (Hermes/OpenClaw/Claude Code/Codex) working o
 
 ## Project
 
-- **Name**: deep-research-project
-- **Version**: v0.8 (5 June 2026)
+- **Name**: searxng-deep-research
+- **Version**: v0.8.1.2 (9 June 2026)
 - **Purpose**: Local SearXNG-based research fetcher + 4-level verification + optional LLM cross-check
 - **Stack**: Python 3.11+, SearXNG (Docker), Valkey, OpenRouter LLM
 - **Location**: /opt/searxng/

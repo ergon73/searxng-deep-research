@@ -1,7 +1,7 @@
 # Deep Research — Architecture
 
-**Version**: v0.8.0 (8 June 2026, after Phase 0 release hygiene)
-**Last updated**: 8 June 2026
+**Version**: v0.8.1.2 (9 June 2026, after ruff cleanup 207→0 errors)
+**Last updated**: 9 June 2026
 **Status**: Working, ~20-60% verification rate on offline eval (depends heavily on query)
 
 ---
@@ -212,13 +212,27 @@ These are real opportunities, but no implementation timeline yet. See
 - ~~Phase 4: Span-level citations~~ → `src/citations.py` ✅
 - ~~Phase 5: Gap analysis + iterative deepening~~ → `src/gap_analysis.py` ✅
 
-**v0.8.1 hardening (just shipped):**
+**v0.8.1 hardening (shipped 2026-06-08):**
 - Runner correctness (synthesis contract, fetch order, use_llm flag)
 - Iterative deepening dedup (no plan mutation, no task/URL re-runs)
 - Release hygiene (pyproject name/version, docker-compose env split,
   INSTALL.md rewrite, GitHub Actions CI)
-- See `RELEASE_NOTES_v0.8.1.md` (forthcoming) and `.hermes/plans/ISSUES.md`
+- See `RELEASE_NOTES_v0.8.1.md` and `.hermes/plans/ISSUES.md`
   for the full diff.
+
+**v0.8.1.1 hotfix series (shipped 2026-06-08, 4 commits on `97b99c6`):**
+- Top-1 ranking: `rank_documents()` uses combined `source_score`
+  (position 0.30 + content 0.45 + length 0.20 + error penalty)
+- Dead proxy code removed from `src/hermes_searxng.py`; `.env_proxy`
+  made optional in docker-compose (per-engine proxying lives in
+  `config/settings.yml` `proxies:` blocks)
+- Citations: return original-space offsets (not normalized)
+- Gap analysis: cross-source verdicts (not substring match)
+
+**v0.8.1.2 (shipped 2026-06-09, `72f8b16`):**
+- Ruff cleanup: 207→0 errors (`ruff check --fix` + `--unsafe-fixes`)
+- 22 files reformatted via `ruff format src scripts`
+- Per-file-ignores + `# noqa` documented in `pyproject.toml`
 
 **v0.9.0+ candidates (still on the shelf):**
 - **Phase 6: LangGraph adapter (optional)** — only if we need

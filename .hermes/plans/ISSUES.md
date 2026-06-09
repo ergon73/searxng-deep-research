@@ -1,4 +1,4 @@
-# Issues Ledger — deep-research-project v0.8.x
+# Issues Ledger — searxng-deep-research v0.8.x
 
 > **Single source of truth для issues / regressions / known gaps.**
 > Обновляется по ходу каждой фазы и при каждом smoke-тесте.
@@ -266,9 +266,9 @@ to implement them and they are not blocking v0.8.x.
 
 ```bash
 cd /opt/searxng
-python3 -m pytest -q                          # 404 passed (post-v0.8.0)
+python3 -m pytest -q                          # 648 passed (post-v0.8.1.2)
 python3 -m ruff check tests/                  # clean
-python3 -m ruff check src/                    # 16+15=31 pre-existing (WONTFIX #008)
+python3 -m ruff check src/                    # clean (post-v0.8.1.2 ruff cleanup; per-file-ignores documented in pyproject.toml)
 docker compose -f config/docker-compose.yml config  # OK
 ls -la /opt/searxng/.env_llm                  # mode 0o600
 

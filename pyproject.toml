@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "searxng-deep-research"
-version = "0.8.1.1"
+version = "0.8.1.2"
 description = "Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,8 +45,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# tests may have asserts, magic numbers, bare excepts, sys.path manipulation
-"tests/*" = ["S", "B", "E402"]  # E402: tests need sys.path.insert() before src imports
+# tests may have asserts (S101), magic numbers (S106), temp paths in fixtures (S108),
+# and need sys.path.insert() before src imports (E402). S105 (hardcoded password)
+# allowed because tests use obvious placeholder values like 'mysecret1234' to verify
+# redaction logic (not real credentials). B (bugbear) stays on — catches real bugs
+# in test harness that blanket ["S", "B"] would hide.
+"tests/*" = ["S101", "S105", "S106", "S108", "E402"]
 # e2e smoke scripts hardcode /tmp output dirs (one-shot dev tooling, not user-facing)
 "scripts/e2e_*.py" = ["S108"]   # hardcoded /tmp path is intentional for smoke traces
 # S310 false-positives guarded at function level by _is_safe_fetch_url() / _safe_urlopen()

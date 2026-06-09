@@ -404,13 +404,13 @@ class TestCitationIntegration:
             assert 0 <= w.offset_start < w.offset_end <= len(text)
 
         # Format citations
-        formatted = [format_cited_claim(c, w, doc_index=0) for c, w in zip(claims, windows)]
+        formatted = [format_cited_claim(c, w, doc_index=0) for c, w in zip(claims, windows, strict=False)]
         for f in formatted:
             assert "[doc_0:" in f
 
         # Augment claims via dataclasses.replace
         from dataclasses import replace
-        augmented = [replace(c, evidence_window=w) for c, w in zip(claims, windows)]
+        augmented = [replace(c, evidence_window=w) for c, w in zip(claims, windows, strict=False)]
 
         stats = citation_stats(augmented)
         assert stats["total"] == 4
@@ -429,12 +429,12 @@ class TestCitationIntegration:
         assert windows[0] is not None
         assert windows[1] is None
 
-        formatted = [format_cited_claim(c, w, doc_index=0) for c, w in zip(claims, windows)]
+        formatted = [format_cited_claim(c, w, doc_index=0) for c, w in zip(claims, windows, strict=False)]
         assert "[doc_0:" in formatted[0]
         assert "[doc_0:" not in formatted[1]
 
         from dataclasses import replace
-        augmented = [replace(c, evidence_window=w) for c, w in zip(claims, windows)]
+        augmented = [replace(c, evidence_window=w) for c, w in zip(claims, windows, strict=False)]
         with pytest.raises(AssertionError, match="не упоминается"):
             assert_citations_complete(augmented)
 
@@ -482,7 +482,7 @@ class TestNormalizeWithMap:
         # Map length must equal normalized length.
         assert len(idx_map) == len(norm)
         # Each index in the map must point to a char in the original.
-        for i, orig_i in enumerate(idx_map):
+        for i, orig_i in enumerate(idx_map):  # noqa: B007  (i is part of enumerate iteration; test reads orig_i)
             assert 0 <= orig_i < len(text)
         # Round-trip: the chars at the mapped positions reconstruct norm.
         for i, ch in enumerate(norm):

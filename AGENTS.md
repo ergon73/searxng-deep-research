@@ -9,7 +9,8 @@ Project rules for any coding agent (Hermes/OpenClaw/Claude Code/Codex) working o
 - **Purpose**: Local SearXNG-based research fetcher + 4-level verification + optional LLM cross-check
 - **Stack**: Python 3.11+, SearXNG (Docker), Valkey, OpenRouter LLM
 - **Location**: /opt/searxng/
-- **Entry point**: `src/hermes_deepresearch.py::deep_research()`
+- **Recommended entry point**: `src/research_runner.py::run_research()` / `deep_research_v2()` (typed, confirmation-aware, v0.8.0+)
+- **Legacy entry point**: `src/hermes_deepresearch.py::deep_research()` (untouched strangler; still works for backward compatibility)
 
 ## Project rules
 

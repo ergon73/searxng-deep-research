@@ -1,15 +1,20 @@
 """
-eval.py — Quality Score eval runner для hermes-deepresearch.
+eval.py — Quality Score eval runner для searxng-deep-research.
 
 Прогоняет golden query set через pipeline, считает QS per query + aggregate,
 аппендит результат в data/eval_log.jsonl.
 
 Quality Score (QS) ∈ [0, 1]:
-  QS = 0.40 * coverage_score
-     + 0.20 * (1 - contradiction_rate)
-     + 0.20 * synthesis.confidence
-     + 0.10 * routing_precision
-     + 0.10 * (1 - needs_confirmation)
+  QS = 0.45 * coverage_score
+     + 0.22 * (1 - contradiction_rate)
+     + 0.22 * synthesis.confidence
+     + 0.11 * routing_precision
+
+  needs_confirmation is intentionally NOT in the QS formula. Confirmation
+  is a safety gate — True means the system correctly identified a high-risk
+  or ambiguous query and asked for human review, not a quality defect.
+  Confirmation is still tracked in result.needs_confirmation and shown in
+  qs_breakdown["no_confirmation"] for diagnostic visibility.
 
 Аргументы:
   --set PATH     Path to eval_set.json (default: data/eval_set.json)

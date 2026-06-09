@@ -34,7 +34,7 @@
 
 ### LOW (informational)
 - **#007** — `WONTFIX` — `meta["engines"]` counting `""` as engine (pre-existing)
-- **#008** — `WONTFIX` — ruff pre-existing style (S310, UP045, I001, UP041) в `src/hermes_deepresearch.py` (15 ошибок) и `src/llm_verifier.py` (16 ошибок) — не от наших фаз
+- **#008** — `DONE 2026-06-09` — ruff pre-existing style (S310/UP045/I001/UP041/S202/E402/etc). Was WONTFIX (31 errors). Closed in v0.8.1.2 commit `72f8b16` (`ruff check --fix` + `--unsafe-fixes` + `ruff format src scripts` + per-file-ignores): 207→0 errors total. Final per-file-ignores: `tests/*` = `["S", "B", "E402"]`; `scripts/e2e_*.py` = `["S108"]`; 3× `src/*.py` = `["S310"]`.
 - **#011** — `DONE 2026-06-06` — test suite not portable (hardcoded `/opt/searxng/src` in conftest, DNS-dependent `test_url_safety`, broken `.env_llm.example` syntax). Fixed via Phase 0 + new skill `portable-test-engineering`.
 
 ---

@@ -172,7 +172,7 @@ class TestIdempotency:
         wins1 = extract_windows(text, "Python", window_size=30)
         wins2 = extract_windows(text, "Python", window_size=30)
         assert len(wins1) == len(wins2)
-        for w1, w2 in zip(wins1, wins2):
+        for w1, w2 in zip(wins1, wins2, strict=False):
             assert w1.text == w2.text
             assert w1.offset_start == w2.offset_start
             assert w1.offset_end == w2.offset_end

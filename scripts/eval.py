@@ -97,6 +97,21 @@ class QueryResult:
     llm_model_used: str = ""
     stage: str = ""  # "search" | "fetch" | "verify" | "synthesis" | "review" | "done"
 
+    # Online mode: silent-skip counters (v0.8.1.3 hygiene — observability for
+    # degraded retrieval. If these grow, the pipeline may be silently dropping
+    # sources, which would mask Quality Score regressions.)
+    urls_total: int = 0
+    urls_skipped_canonical: int = 0  # canonical_url() raised
+    urls_skipped_deny_pattern: int = 0  # matched _URL_DENY_PATTERNS
+    urls_skipped_duplicate: int = 0  # URL or canon already in seen
+    fetch_errors: int = 0  # fetch_url() raised (no content, network, etc.)
+    urls_empty_or_error: int = 0  # fetch returned no text or error field
+    search_errors: int = 0  # web_search() raised
+    search_no_results: int = 0  # web_search() returned []
+    verify_errors: int = 0  # verify_sources() raised
+    synthesis_errors: int = 0  # synthesize() raised
+    review_errors: int = 0  # review() raised
+
     # Quality Score
     qs: float = 0.0
     qs_breakdown: dict = field(default_factory=dict)
@@ -158,10 +173,12 @@ def _run_online_pipeline(result: QueryResult) -> None:
     except Exception as e:
         result.error = f"search: {type(e).__name__}: {e}"
         result.stage = "search_failed"
+        result.search_errors += 1
         return
     result.search_results_count = len(search_results)
     if not search_results:
         result.stage = "no_results"
+        result.search_no_results += 1
         return
 
     # 2. FETCH top-N
@@ -187,18 +204,23 @@ def _run_online_pipeline(result: QueryResult) -> None:
 
     for r in search_results:
         url = r.get("url", "")
+        result.urls_total += 1
         if not url or url in seen:
+            result.urls_skipped_duplicate += 1
             continue
         # Apply URL quality filter
         if any(pat in url for pat in _URL_DENY_PATTERNS):
+            result.urls_skipped_deny_pattern += 1
             continue
         seen.add(url)
         try:
             canon = canonical_url(url)
             if canon in seen:
+                result.urls_skipped_duplicate += 1
                 continue
             seen.add(canon)
         except Exception:  # noqa: S110  (unparseable URL → skip silently, intentional)
+            result.urls_skipped_canonical += 1
             pass
         try:
             content = fetch_url(
@@ -207,8 +229,10 @@ def _run_online_pipeline(result: QueryResult) -> None:
                 max_chars=ONLINE_FETCH_MAX_CHARS,
             )
         except Exception:  # noqa: S112  (fetch error → skip URL, intentional noise filter)
+            result.fetch_errors += 1
             continue
         if not content or content.get("error"):
+            result.urls_empty_or_error += 1
             continue
         sources.append(
             {
@@ -249,6 +273,7 @@ def _run_online_pipeline(result: QueryResult) -> None:
     except Exception as e:
         result.error = f"verify: {type(e).__name__}: {e}"
         result.stage = "verify_failed"
+        result.verify_errors += 1
         return
     # Extract per-claim details — v0.8.3: use ALL details from verify_sources
     # (which now ranks by query and returns facts from top-1 source). The
@@ -303,6 +328,7 @@ def _run_online_pipeline(result: QueryResult) -> None:
     except Exception as e:
         result.error = f"synthesis: {type(e).__name__}: {e}"
         result.stage = "synthesis_failed"
+        result.synthesis_errors += 1
         return
     result.coverage_score = synth.coverage.get("score", 0.0) if isinstance(synth.coverage, dict) else 0.0
     result.confidence = synth.confidence
@@ -322,6 +348,7 @@ def _run_online_pipeline(result: QueryResult) -> None:
         # Review failure is non-fatal; keep synthesis scores
         result.risk_level = "unknown"
         result.stage = "review_failed"
+        result.review_errors += 1
     else:
         result.risk_level = rv.risk_level
         # Apply confidence adjustment (only downward per design)
@@ -418,6 +445,23 @@ def aggregate_results(results: list[QueryResult]) -> dict:
     total_llm_calls = sum(r.llm_calls for r in results)
     avg_stage = sum(1 for r in results if r.stage == "done") / n
 
+    # v0.8.1.3: aggregate silent-skip counters across all results.
+    # If any of these grow, retrieval is degrading silently and the QS
+    # numbers above may be misleadingly stable.
+    skip_counters = {
+        "urls_total": sum(r.urls_total for r in results),
+        "urls_skipped_duplicate": sum(r.urls_skipped_duplicate for r in results),
+        "urls_skipped_deny_pattern": sum(r.urls_skipped_deny_pattern for r in results),
+        "urls_skipped_canonical": sum(r.urls_skipped_canonical for r in results),
+        "fetch_errors": sum(r.fetch_errors for r in results),
+        "urls_empty_or_error": sum(r.urls_empty_or_error for r in results),
+        "search_errors": sum(r.search_errors for r in results),
+        "search_no_results": sum(r.search_no_results for r in results),
+        "verify_errors": sum(r.verify_errors for r in results),
+        "synthesis_errors": sum(r.synthesis_errors for r in results),
+        "review_errors": sum(r.review_errors for r in results),
+    }
+
     return {
         "count": n,
         "qs_mean": round(sum(qs_values) / n, 4) if qs_values else 0.0,
@@ -431,6 +475,7 @@ def aggregate_results(results: list[QueryResult]) -> dict:
         "avg_confidence": round(avg_confidence, 4),
         "total_llm_calls": total_llm_calls,
         "pipeline_completion_rate": round(avg_stage, 4),
+        "skip_counters": skip_counters,
     }
 
 
@@ -451,6 +496,24 @@ def format_report(results: list[QueryResult], aggregate: dict) -> str:
             f"LLM calls: {aggregate.get('total_llm_calls', 0)} | "
             f"pipeline done: {aggregate.get('pipeline_completion_rate', 0):.1%}"
         )
+        # v0.8.1.3: silent-skip counters (observability for degraded retrieval)
+        sc = aggregate.get("skip_counters", {})
+        if sc:
+            lines.append(
+                f"  URLs: total={sc.get('urls_total', 0)} | "
+                f"skipped(dup)={sc.get('urls_skipped_duplicate', 0)} | "
+                f"skipped(deny)={sc.get('urls_skipped_deny_pattern', 0)} | "
+                f"skipped(canonical)={sc.get('urls_skipped_canonical', 0)} | "
+                f"fetch_errors={sc.get('fetch_errors', 0)} | "
+                f"empty_or_error={sc.get('urls_empty_or_error', 0)}"
+            )
+            lines.append(
+                f"  Pipeline errors: search={sc.get('search_errors', 0)} | "
+                f"search_no_results={sc.get('search_no_results', 0)} | "
+                f"verify={sc.get('verify_errors', 0)} | "
+                f"synthesis={sc.get('synthesis_errors', 0)} | "
+                f"review={sc.get('review_errors', 0)}"
+            )
     lines.append(f"Confirmation rate: {aggregate['confirmation_rate']:.1%}  (target: 0%)")
     lines.append(f"Routing accuracy: {aggregate['routing_accuracy']:.1%}")
     lines.append(f"Errors: {aggregate['error_count']}")

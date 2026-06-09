@@ -846,6 +846,53 @@ def _normalize_num_unit(phrase: str) -> tuple[str, str] | None:
     return (m.group(1), _morph_stem(m.group(2)))
 
 
+def _match_numeric_unit(fact: str, text: str) -> tuple[bool, str | None, int]:
+    """v0.8.2-A: scan ALL numeric occurrences before deciding.
+
+    Bug fixed: previously the matcher returned (True, "num_mismatch", 85)
+    on the first same-stem-different-number occurrence, never reaching a
+    later correct same-number occurrence in the same text. For fact
+    "22 БПЛА" vs "23 беспилотника ... 22 беспилотника" the matcher would
+    return num_mismatch even though a perfect match exists later.
+
+    New algorithm: scan all matches, return (True, "num_morph", 90) on
+    the FIRST same-number same-or-synonym-stem occurrence, and only
+    fall back to (True, "num_mismatch", 85) if the entire scan has no
+    same-number match but at least one same/synonym-stem mismatch.
+    """
+    norm = _normalize_num_unit(fact)
+    if not norm:
+        return (False, None, 0)
+    fact_num, fact_stem = norm
+    text_lower = text.lower()
+    saw_mismatch = False
+
+    for m in NUM_UNIT_RE.finditer(text_lower):
+        t_num = m.group(1)
+        t_stem = _morph_stem(m.group(2))
+
+        same_stem = t_stem == fact_stem
+        t_syns = SYNONYM_DICT.get(t_stem, set())
+        f_syns = SYNONYM_DICT.get(fact_stem, set())
+        synonym_stem = t_stem in f_syns or fact_stem in t_syns or bool(t_syns & f_syns)
+
+        if not (same_stem or synonym_stem):
+            continue
+
+        if t_num == fact_num:
+            # Same number + same/synonym stem → confident support.
+            return (True, "num_morph", 90)
+
+        # Different number + same/synonym stem → potential conflict, but
+        # keep scanning in case a same-number match exists later.
+        saw_mismatch = True
+
+    if saw_mismatch:
+        return (True, "num_mismatch", 85)
+
+    return (False, None, 0)
+
+
 def _match_in_text(fact: str, text: str) -> tuple[bool, str, int]:
     """
     Match fact в text на 4 уровнях.
@@ -861,38 +908,16 @@ def _match_in_text(fact: str, text: str) -> tuple[bool, str, int]:
     if fact_lower in text_lower:
         return (True, "exact", 100)
 
-    # 2. Numeric morphology (v0.8.2 — Phase 3)
-    #    "123 дрона" должен матчить "123 дронов" (same number, same stem) → num_morph.
-    #    "123 дрона" vs "124 дрона" → num_mismatch (same stem, different number).
-    #    This is a CRITICAL distinction for verification: a count mismatch
-    #    is not "supports" — it is a contradiction that needs human review.
-    #    See audit 2026-06-07, section 5, P0: numeric mismatch.
-    norm = _normalize_num_unit(fact)
-    if norm:
-        fact_num, fact_stem = norm
-        for m in NUM_UNIT_RE.finditer(text_lower):
-            t_num, t_stem = m.group(1), _morph_stem(m.group(2))
-            if t_stem == fact_stem:
-                if t_num == fact_num:
-                    # Same number + same stem → confident support.
-                    return (True, "num_morph", 90)
-                # Different number + same stem → CONFLICT, not support.
-                # Return True for backwards-compatible signature, but
-                # method='num_mismatch' signals verify_sources() to
-                # classify this as NUMERIC_MISMATCH, not SUPPORTS.
-                return (True, "num_mismatch", 85)
-            # If fact_stem and t_stem are synonyms (e.g. "бпла" vs
-            # "беспилотник"), still numeric-match with cross-stem check.
-            t_norm = t_stem
-            f_norm = fact_stem
-            t_syns = SYNONYM_DICT.get(t_norm, set())
-            f_syns = SYNONYM_DICT.get(f_norm, set())
-            if t_norm in f_syns or f_norm in t_syns or (t_syns & f_syns):
-                # Synonym stems + same number → num_morph (high confidence).
-                if t_num == fact_num:
-                    return (True, "num_morph", 90)
-                # Synonym stems + different number → still a count conflict.
-                return (True, "num_mismatch", 85)
+    # 2. Numeric morphology (v0.8.2-A).
+    #    Same number + same/synonym stem → num_morph (confident support).
+    #    Different number + same/synonym stem, no later same-number
+    #    occurrence → num_mismatch (count conflict, not support).
+    #    All occurrences scanned (see _match_numeric_unit).
+    matched, method, score = _match_numeric_unit(fact, text)
+    if matched:
+        # method is "num_morph" or "num_mismatch" from helper; convert
+        # None to None for downstream compatibility (signature says str).
+        return (matched, method if method is not None else "num_morph", score)
 
     # 3. Fuzzy (token_sort_ratio — ловит перестановки слов)
     # Сравниваем fact с каждым окном ±50% длины fact в text

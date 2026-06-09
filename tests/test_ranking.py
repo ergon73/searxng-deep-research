@@ -17,9 +17,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
-
 # Make src importable (test file may run from repo root or tests/).
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
@@ -27,14 +24,14 @@ if str(_SRC) not in sys.path:
 
 
 from ranking import (  # noqa: E402
+    _keyword_coverage,
+    _length_score,
+    _noise_penalty,
+    _position_score,
+    _query_terms,
     compute_source_score,
     rank_documents,
     select_top_n,
-    _query_terms,
-    _keyword_coverage,
-    _length_score,
-    _position_score,
-    _noise_penalty,
 )
 
 
@@ -237,7 +234,7 @@ class TestRankDocuments:
         d1 = _doc("https://a.com", text="x" * 100, length=100)
         d2 = _doc("https://b.com", text="x" * 100, length=100)
         input_list = [d1, d2]
-        out = rank_documents(input_list, "")
+        rank_documents(input_list, "")
         # The input list object should be unchanged.
         assert input_list == [d1, d2]
 

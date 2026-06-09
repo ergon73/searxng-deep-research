@@ -17,9 +17,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from routing import classify_intent, should_warn_about_routing, Intent
 from query_adaptation import adapt_query, build_search_plan_preview
-
+from routing import Intent, classify_intent, should_warn_about_routing
 
 # ====================================================================
 # 1. Per-route classification

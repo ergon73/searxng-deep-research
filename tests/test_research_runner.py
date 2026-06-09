@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-
 # Make src importable for the module under test
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
@@ -28,8 +27,9 @@ if str(_SRC) not in sys.path:
 
 # We import the module under test AFTER sys.path is set, so all of its
 # internal `from ... import` works in both repo and tmp-portable contexts.
+from models import SearchTask  # noqa: E402
+from planner import build_research_plan  # noqa: E402
 from research_runner import (  # noqa: E402
-    ResearchResult,
     _dedup_hits_by_canonical,
     _dispatch_search_task,
     _extract_claims_from_documents,
@@ -39,9 +39,6 @@ from research_runner import (  # noqa: E402
     deep_research_v2,
     run_research,
 )
-from models import ResearchState, SearchTask  # noqa: E402
-from planner import build_research_plan  # noqa: E402
-
 
 # ----------------------------------------------------------- helpers/fixtures
 
@@ -473,8 +470,7 @@ class TestRunnerSpanCitations:
         (Phase 4 fields), and the claim augmentation should round-trip
         through `to_dict()` cleanly."""
         from dataclasses import asdict
-        from citations import build_evidence_window
-        from evidence import EvidenceWindow
+
 
         result = run_research("Falcon 9", approved_plan=True)
         # Pick first claim with a window
@@ -675,6 +671,7 @@ class TestLegacyUntouched:
 
     def test_legacy_deep_research_signature_unchanged(self):
         import inspect
+
         from hermes_deepresearch import deep_research
         sig = inspect.signature(deep_research)
         params = list(sig.parameters.keys())
@@ -1056,7 +1053,6 @@ class TestPhaseBPlanNotMutated:
         # We need to capture the plan; do that by reading it from the
         # ResearchResult on the way out. But we want to also see the
         # plan before run_research. So we use build_research_plan directly.
-        from planner import build_research_plan
         plan = build_research_plan("Falcon 9")
         tasks_before = list(plan.search_tasks)
         n_before = len(tasks_before)
@@ -1108,7 +1104,6 @@ class TestPhaseBPlanNotMutated:
         # The result.plan.search_tasks is the same frozen plan object
         assert result.plan is not None
         # Its search_tasks list should equal what build_research_plan gave us
-        from planner import build_research_plan
         plan2 = build_research_plan("Falcon 9")
         assert len(result.plan.search_tasks) == len(plan2.search_tasks), (
             "BUG: result.plan.search_tasks grew — gap-fill tasks were "
@@ -1129,8 +1124,6 @@ class TestPhaseBDeepeningDedup:
         iteration. v0.8.1 dispatches `current_tasks` only, which is a
         fresh snapshot per iteration (not the full plan)."""
         from research_runner import _task_key as runner_task_key
-        from planner import build_research_plan
-        from models import SearchTask
 
         dispatched_keys: list[tuple] = []
 

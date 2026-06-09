@@ -19,15 +19,13 @@ These tests are CONTRACT tests, not perfection tests:
 
 Total: 30+ adversarial cases. See SKILL.md for the full coverage map.
 """
-import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from query_adaptation import adapt_query, _is_narrative_entity
-
+from query_adaptation import _is_narrative_entity, adapt_query
 
 # ====================================================================
 # Helpers

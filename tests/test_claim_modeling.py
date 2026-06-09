@@ -23,7 +23,6 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from hermes_deepresearch import _match_in_text, verify_sources
 
-
 # ====================================================================
 # Skill 6.5 AC1-AC4: _match_in_text() with numeric counts
 # ====================================================================

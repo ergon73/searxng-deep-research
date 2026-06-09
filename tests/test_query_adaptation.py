@@ -15,13 +15,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from query_adaptation import (
-    adapt_query,
-    detect_language,
     _extract_candidate_entities,
     _score_entity,
+    adapt_query,
     build_search_plan_preview,
+    detect_language,
 )
-
 
 # ====================================================================
 # Test 1: passthrough for short queries (≤10 words)

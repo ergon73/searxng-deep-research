@@ -13,20 +13,18 @@ What we verify:
 All tests are offline — no network, no LLM.
 """
 import pytest
-
-from models import Claim
-from evidence import EvidenceWindow
 from citations import (
-    find_span,
-    build_evidence_window,
-    format_cited_claim,
-    citation_stats,
-    assert_citations_complete,
     _CITATION_RE,
     _normalize_with_map,
     _normalize_ws,
+    assert_citations_complete,
+    build_evidence_window,
+    citation_stats,
+    find_span,
+    format_cited_claim,
 )
-
+from evidence import EvidenceWindow
+from models import Claim
 
 # ============================================================
 # find_span

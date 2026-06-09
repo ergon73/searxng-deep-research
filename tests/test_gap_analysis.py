@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-
 # Make src importable
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
@@ -22,20 +21,13 @@ if str(_SRC) not in sys.path:
 
 
 from gap_analysis import (  # noqa: E402
-    MAX_UNSUPPORTED_CLAIM_RATIO,
-    MIN_DOCUMENTS,
-    MIN_TOP1_CONFIDENCE,
-    MIN_UNIQUE_DOMAINS,
     ResearchGap,
     _count_unique_domains,
     _domain_of,
-    _has_contradiction,
-    _top1_confidence,
     analyze_gaps,
     gaps_to_search_tasks,
 )
 from models import Claim, ResearchState  # noqa: E402
-
 
 # ----------------------------------------------------------- helpers
 
@@ -523,7 +515,8 @@ class TestGapAnalysisNoNetwork:
     """gap_analysis must be pure stdlib — no network, no LLM."""
 
     def test_no_network_or_llm_calls(self, monkeypatch):
-        import urllib.request, socket
+        import socket
+        import urllib.request
         monkeypatch.setattr(urllib.request, "urlopen",
                             lambda *a, **kw: pytest.fail("urlopen called"))
         monkeypatch.setattr(socket, "socket",

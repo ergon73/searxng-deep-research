@@ -4,7 +4,6 @@ SSRF guard tests — _is_safe_fetch_url и SafeRedirectHandler.
 Critical: regression на 169.254.169.254, localhost, private IP, IPv4-mapped IPv6.
 """
 import pytest
-
 from hermes_deepresearch import _is_safe_fetch_url
 
 
@@ -83,7 +82,6 @@ class TestIsSafeFetchUrl:
     def test_dns_resolves_to_private_ip_blocks(self, monkeypatch):
         """DNS-rebinding defence: if a public hostname resolves to a private IP,
         _is_safe_fetch_url must still block."""
-        import socket as _socket
         def _fake_resolve(host, *args, **kwargs):
             return [(2, 1, 6, "", ("10.0.0.1", 0))]
         monkeypatch.setattr("socket.getaddrinfo", _fake_resolve)

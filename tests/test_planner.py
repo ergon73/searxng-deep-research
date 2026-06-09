@@ -15,15 +15,13 @@ Acceptance criteria (from ISSUES.md #017):
 from __future__ import annotations
 
 import pytest
-
+from models import ResearchState, SearchTask
 from planner import (
     _FALSIFICATION_ROUTES,
     ResearchPlan,
     build_research_plan,
     plan_to_state,
 )
-from models import ResearchState, SearchTask
-
 
 # ----------------------------------------------------------- falsification gate
 

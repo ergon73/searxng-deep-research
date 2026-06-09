@@ -13,35 +13,19 @@
 
 Всего: ~27 тестов.
 """
-import hashlib
-import io
-import os
-import re
 import tarfile
-import tempfile
-from pathlib import Path
 
 import pytest
-
 from release_packaging import (
-    ReleaseConfig,
-    ReleaseManifest,
-    PackagingError,
-    SecretLeakError,
-    IgnorePattern,
-    load_releaseignore,
-    collect_files,
-    build_tar,
-    build_release,
-    verify_release,
-    quick_verify,
-    DEFAULT_IGNORE_PATTERNS,
     FIXED_MTIME,
-    MAX_UNPACK_SIZE,
-    MAX_FILES,
-    REDACTION_MARKER,
+    IgnorePattern,
+    PackagingError,
+    ReleaseConfig,
+    build_release,
+    collect_files,
+    quick_verify,
+    verify_release,
 )
-
 
 # --- fixtures ---------------------------------------------------------------
 
@@ -207,7 +191,7 @@ class TestDeterministic:
         assert file_names == sorted(file_names)
 
     def test_mtime_fixed(self, config):
-        m = build_release(config)
+        build_release(config)
         with tarfile.open(config.output, mode="r:gz") as tar:
             for member in tar.getmembers():
                 assert member.mtime == FIXED_MTIME
@@ -341,7 +325,7 @@ class TestHardRules:
             redact_secrets=True,
         )
         # Should not raise (post-scan would catch unredacted key)
-        m = build_release(cfg)
+        build_release(cfg)
         # Verify key NOT в архиве
         with tarfile.open(cfg.output, mode="r:gz") as tar:
             for member in tar.getmembers():

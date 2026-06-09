@@ -7,7 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from redact import redact_secrets, redact_file, scan_paths
+from redact import redact_file, redact_secrets, scan_paths
 
 
 # Helper builders

@@ -17,41 +17,28 @@
 Всего: 30+ тестов.
 """
 import pytest
-
 from synthesis import (
+    MAX_CITATIONS,
+    MAX_MARKDOWN_CHARS,
+    MAX_OPEN_QUESTIONS,
+    MAX_QUOTE_CHARS,
     Citation,
     Synthesis,
-    SynthesisError,
-    synthesize,
-    enrich_with_llm,
-    _dedup_sources,
     _build_citation_table,
-    _compute_coverage,
-    _find_contradictions,
-    _compute_confidence,
     _build_open_questions,
-    _render_markdown,
-    _validate_enriched_markdown,
+    _compute_confidence,
+    _compute_coverage,
+    _dedup_sources,
+    _extract_quote,
+    _find_contradictions,
     _md_escape,
+    _render_markdown,
     _truncate,
     _url_to_title,
-    _extract_quote,
-    _format_citation_markers,
-    _build_url_to_id,
-    _collect_supporting_urls,
-    _collect_refuting_urls,
-    _collect_mismatch_urls,
-    MAX_QUOTE_CHARS,
-    MAX_CITATIONS,
-    MAX_OPEN_QUESTIONS,
-    MAX_MARKDOWN_CHARS,
-    VERDICT_SUPPORTS,
-    VERDICT_REFUTES,
-    VERDICT_INSUFFICIENT,
-    VERDICT_CONFLICTING,
-    VERDICT_NUMERIC_MISMATCH,
+    _validate_enriched_markdown,
+    enrich_with_llm,
+    synthesize,
 )
-
 
 # --- fixtures ---------------------------------------------------------------
 

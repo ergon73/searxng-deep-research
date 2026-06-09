@@ -177,7 +177,7 @@ class TestEnvLlmExample:
             elif stripped.count("=") > 1:
                 bad_lines.append((n, "multiple '=' in one line", line))
         assert not bad_lines, (
-            f".env_llm.example has invalid env-file syntax:\n"
+            ".env_llm.example has invalid env-file syntax:\n"
             + "\n".join(f"  line {n}: {reason}: {line!r}" for n, reason, line in bad_lines)
         )
 

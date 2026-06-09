@@ -19,13 +19,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from evidence import (
+    MAX_WINDOW_SIZE,
+    EvidenceWindow,
     extract_windows,
     windows_to_blob,
-    EvidenceWindow,
-    MAX_WINDOW_SIZE,
 )
-from llm_verifier import LLMVerifier, _HAS_EVIDENCE
-
+from llm_verifier import _HAS_EVIDENCE, LLMVerifier
 
 # ====================================================================
 # 1. Single-word claim

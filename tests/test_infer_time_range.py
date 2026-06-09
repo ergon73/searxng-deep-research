@@ -2,7 +2,6 @@
 infer_time_range() tests — fresh-сигналы побеждают год.
 """
 import pytest
-
 from hermes_deepresearch import infer_time_range
 
 

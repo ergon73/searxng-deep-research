@@ -8,10 +8,8 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from evidence import EvidenceWindow
 from models import Claim, ResearchState, SearchTask
-
 
 # ---------------------------------------------------------------- SearchTask
 

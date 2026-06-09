@@ -17,12 +17,10 @@ Pure stdlib YAML parsing — fast, hermetic, no network.
 """
 from __future__ import annotations
 
-import os
 import pathlib
 from typing import Any
 
 import yaml
-
 
 COMPOSE_PATH = pathlib.Path(__file__).resolve().parent.parent / "config" / "docker-compose.yml"
 

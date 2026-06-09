@@ -2,7 +2,6 @@
 canonical_url() tests — strip utm_*, fbclid, default ports, fragment, lowercase.
 """
 import pytest
-
 from hermes_deepresearch import canonical_url
 
 

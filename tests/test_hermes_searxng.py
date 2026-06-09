@@ -21,7 +21,7 @@ def test_module_imports_cleanly():
 
 def test_public_api_still_callable():
     """web_search and news_search must remain callable after refactor."""
-    from hermes_searxng import web_search, news_search
+    from hermes_searxng import news_search, web_search
     assert callable(web_search)
     assert callable(news_search)
 

@@ -9,7 +9,6 @@ Locks in DR-05062026(3) §Phase 3 (5 acceptance criteria):
   AC5. tests first, patch second
 """
 import pytest
-
 from hermes_deepresearch import _extract_facts, _is_negated, _match_in_text
 
 

@@ -14,41 +14,37 @@
 Всего: ~30 тестов.
 """
 import pytest
-
-from synthesis import (
-    Citation,
-    Synthesis,
-    synthesize,
-    VERDICT_SUPPORTS,
-    VERDICT_REFUTES,
-)
 from critical_review import (
-    ReviewFlag,
-    ReviewResult,
-    review,
-    check_numeric_consistency,
-    check_entity_hallucination,
-    check_self_contradiction,
-    check_citation_integrity,
-    check_temporal_consistency,
-    _compute_risk_score,
-    _classify_risk_level,
-    _build_recommendations,
-    _compute_confidence_adjustment,
-    SEVERITY_HIGH,
-    SEVERITY_MEDIUM,
-    SEVERITY_LOW,
-    CAT_NUMERIC_CONSISTENCY,
-    CAT_ENTITY_HALLUCINATION,
-    CAT_SELF_CONTRADICTION,
     CAT_CITATION_INTEGRITY,
-    CAT_TEMPORAL_CONSISTENCY,
+    CAT_ENTITY_HALLUCINATION,
+    CAT_NUMERIC_CONSISTENCY,
+    CAT_SELF_CONTRADICTION,
+    MAX_CONFIDENCE_ADJUSTMENT,
     RISK_LEVEL_HIGH_THRESHOLD,
     RISK_LEVEL_MEDIUM_THRESHOLD,
     RISK_NORMALIZATION,
-    MAX_CONFIDENCE_ADJUSTMENT,
+    SEVERITY_HIGH,
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    ReviewFlag,
+    _build_recommendations,
+    _classify_risk_level,
+    _compute_confidence_adjustment,
+    _compute_risk_score,
+    check_citation_integrity,
+    check_entity_hallucination,
+    check_numeric_consistency,
+    check_self_contradiction,
+    check_temporal_consistency,
+    review,
 )
-
+from synthesis import (
+    VERDICT_REFUTES,
+    VERDICT_SUPPORTS,
+    Citation,
+    Synthesis,
+    synthesize,
+)
 
 # --- fixtures ---------------------------------------------------------------
 

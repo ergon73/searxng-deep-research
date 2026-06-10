@@ -289,9 +289,11 @@ The C3 release-notes-correction commit (`84fcfde`) updates this file
 only (replaces stale future-wording that was written before the
 release-prep commit landed). It does not change code, tests,
 providers, pipeline shape, or runtime behaviour either.
-The annotated tag `v0.8.2` will be created on the final release
-commit after explicit user approval. The Git tag is the
-authoritative pointer to the release commit.
+The Git tag `v0.8.2` is the authoritative pointer to the release
+commit. This release-notes file intentionally avoids hardcoding the
+release commit SHA, because the SHA cannot be known until the tag
+is created. Use `git show v0.8.2` or `git log v0.8.1.4..v0.8.2` to
+inspect the exact release set.
 
 > **Note on docs-only release commits.** The final annotated tag
 > may include a release-notes-only correction commit (e.g. a C5
@@ -359,8 +361,9 @@ release-prep scope discipline.
 
 - `docs/SELF_REVIEW_v0.8.0.md` — author's pre-review self-criticism
   (still applicable as a baseline).
-- `.hermes/plans/ISSUES.md` — open/closed issues tracker, v0.8.2 row
-  will be added post-tag.
+- `.hermes/plans/ISSUES.md` — open/closed issues tracker; v0.8.2
+  status is recorded there as a project-state artefact, independent
+  of the Git tag.
 - Tag-target self-reference trap
   (`processing-inbound-reviews/references/tag-target-self-ref-trap.md`)
   — why this file intentionally does not hardcode the release

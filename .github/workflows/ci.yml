@@ -45,13 +45,15 @@ jobs:
         env:
           OPENROUTER_API_KEY: not_a_real_key_dummy_for_ci
         run: |
-          # Create dummy .env_llm in TWO locations (real secrets never live in CI cache):
-          #   - /opt/searxng/.env_llm: read by src/llm_verifier.py::_load_api_key
-          #   - $GITHUB_WORKSPACE/.env_llm: read by tests/test_compose_config.py::TestEnvLlm
+          # v0.8.2-C1: tests no longer require a repo-root .env_llm
+          # (TestEnvLlm uses tmp_path). The /opt/searxng/.env_llm
+          # fabrication is kept as a no-op safety net for any
+          # legacy code path that still reads it via _load_api_key;
+          # OPENROUTER_API_KEY env var is the primary path and is
+          # already set above.
           mkdir -p /opt/searxng
           python -c "open('/opt/searxng/.env_llm', 'w').write('LLM_API_KEY=dummy_for_ci_only\nLLM_MODEL=meta-llama/llama-3.1-8b-instruct:free\nSEARXNG_SECRET=dummy_for_ci_only\n')"
-          cp /opt/searxng/.env_llm .env_llm
-          chmod 600 /opt/searxng/.env_llm .env_llm
+          chmod 600 /opt/searxng/.env_llm
           PYTHONPATH=src python -m pytest -q
 
       - name: Eval dry-run smoke

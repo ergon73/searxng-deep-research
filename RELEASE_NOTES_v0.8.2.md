@@ -3,7 +3,7 @@
 **Date:** 10 June 2026
 **Tag:** `v0.8.2` → this release commit (see `git tag -l 'v0.8.*'`)
 **Type:** Hardening — verification correctness, source-bound LLM semantics, env-test hygiene
-**Diff vs v0.8.1.4:** 6 commits on main, all under the v0.8.2 review chain
+**Diff vs v0.8.1.4:** reviewed hardening chain on main; see Git history for exact commit count
 **CI status:** all release commits green on main (see CI section below)
 
 ---
@@ -269,7 +269,9 @@ ship a `.env_llm`".
 
 ## CI
 
-All 6 commits in this release pushed to `main`, all CI runs green:
+CI runs for the reviewed v0.8.2 hardening chain are green.
+
+### Reviewed CI checkpoints
 
 | Commit | Run | Status |
 |--------|-----|--------|
@@ -290,6 +292,15 @@ providers, pipeline shape, or runtime behaviour either.
 The annotated tag `v0.8.2` will be created on the final release
 commit after explicit user approval. The Git tag is the
 authoritative pointer to the release commit.
+
+> **Note on docs-only release commits.** The final annotated tag
+> may include a release-notes-only correction commit (e.g. a C5
+> metadata fix) that ships after the code, env-test hygiene, and
+> release-prep commits. Such a commit updates this file only and
+> does not change code, tests, providers, pipeline shape, or
+> runtime behaviour. The Git tag is the authoritative pointer to
+> the exact release commit; consult `git log v0.8.1.4..v0.8.2` or
+> `git tag -l 'v0.8.*'` for the canonical commit set.
 
 ---
 

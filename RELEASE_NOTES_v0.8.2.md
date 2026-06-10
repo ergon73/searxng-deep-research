@@ -3,8 +3,8 @@
 **Date:** 10 June 2026
 **Tag:** `v0.8.2` → this release commit (see `git tag -l 'v0.8.*'`)
 **Type:** Hardening — verification correctness, source-bound LLM semantics, env-test hygiene
-**Diff vs v0.8.1.4:** 4 commits on main, all under the `v0.8.2-*` review chain
-**CI status:** all 4 stack commits green on `main` (see CI section below)
+**Diff vs v0.8.1.4:** 6 commits on main, all under the v0.8.2 review chain
+**CI status:** all release commits green on main (see CI section below)
 
 ---
 
@@ -24,7 +24,8 @@ fabricating a repo-root `.env_llm` (`C1`).
 
 **No new pipeline stages, no new providers, no new dependencies.**
 
-Four commits in this release (oldest first):
+Core hardening commits, oldest first (release-prep and C3 release-notes
+correction are docs-only commits described separately under the CI section):
 
 1. `fix(verify): v0.8.2-A — numeric matcher scans all occurrences before mismatch`
    — numeric-match now scans every numeric occurrence in the source text
@@ -268,21 +269,27 @@ ship a `.env_llm`".
 
 ## CI
 
-All 5 commits in this release pushed to `main`, all CI runs green:
+All 6 commits in this release pushed to `main`, all CI runs green:
 
 | Commit | Run | Status |
 |--------|-----|--------|
-| `9bd0bc7` (v0.8.2-A)              | [run 27220266692](https://github.com/ergon73/searxng-deep-research/actions/runs/27220266692) | success |
-| `64b7047` (v0.8.2-B1)             | [run 27225501055](https://github.com/ergon73/searxng-deep-research/actions/runs/27225501055) | success |
-| `9eb9803` (v0.8.2-B2)             | [run 27257014232](https://github.com/ergon73/searxng-deep-research/actions/runs/27257014232) | success |
-| `653b01a` (v0.8.2-C1)             | [run 27269163632](https://github.com/ergon73/searxng-deep-research/actions/runs/27269163632) | success |
-| `0e01d2c` (v0.8.2 release prep)   | [run 27270532884](https://github.com/ergon73/searxng-deep-research/actions/runs/27270532884) | success |
+| `9bd0bc7` (v0.8.2-A)                       | [run 27220266692](https://github.com/ergon73/searxng-deep-research/actions/runs/27220266692) | success |
+| `64b7047` (v0.8.2-B1)                      | [run 27225501055](https://github.com/ergon73/searxng-deep-research/actions/runs/27225501055) | success |
+| `9eb9803` (v0.8.2-B2)                      | [run 27257014232](https://github.com/ergon73/searxng-deep-research/actions/runs/27257014232) | success |
+| `653b01a` (v0.8.2-C1)                      | [run 27269163632](https://github.com/ergon73/searxng-deep-research/actions/runs/27269163632) | success |
+| `0e01d2c` (v0.8.2 release prep)            | [run 27270532884](https://github.com/ergon73/searxng-deep-research/actions/runs/27270532884) | success |
+| `84fcfde` (v0.8.2-C3 release-notes correction) | [run 27271053200](https://github.com/ergon73/searxng-deep-research/actions/runs/27271053200) | success |
 
 The release-prep commit (`0e01d2c`) updates `pyproject.toml`,
 `README.md`, `AGENTS.md`, and this release-notes file. It does not
 change code, tests, providers, pipeline shape, or runtime behaviour.
-The annotated tag `v0.8.2` will be created on this release-prep
-commit after explicit user approval (see note on tag target below).
+The C3 release-notes-correction commit (`84fcfde`) updates this file
+only (replaces stale future-wording that was written before the
+release-prep commit landed). It does not change code, tests,
+providers, pipeline shape, or runtime behaviour either.
+The annotated tag `v0.8.2` will be created on the final release
+commit after explicit user approval. The Git tag is the
+authoritative pointer to the release commit.
 
 ---
 

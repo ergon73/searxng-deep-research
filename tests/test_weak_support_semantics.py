@@ -1,5 +1,14 @@
 """
-v0.8.2-B1 (reviewer-9) — WEAK_SUPPORT semantics + source_urls whitelist.
+v0.8.2-B2 (reviewer-9) — source-bound wording + canonical URL storage.
+
+Builds on B1 (WEAK_SUPPORT semantics + source_urls whitelist).
+
+B2 changes:
+  1. Prompt wording: "supporting sources" → "evidence sources" in LLM prompt
+     surface (header + block label + docstrings).
+  2. _filter_source_urls_to_candidates: returns CANDIDATE'S ORIGINAL URL,
+     not LLM raw URL, after canonical whitelist matching. The LLM no
+     longer controls the final citation string.
 
 Acceptance:
   1. SUPPORTS + valid source_urls from source_candidates => verified=True, verdict=SUPPORTS.
@@ -7,13 +16,16 @@ Acceptance:
   3. WEAK_SUPPORT does not increment verified_facts.
   4. WEAK_SUPPORT does not increase verification_rate.
   5. returned source_urls not present in source_candidates are rejected.
-  6. canonical URL match accepted and stored as original source URL.
-  7. REFUTES without valid source_urls is not a cited refutation.
+  6. canonical URL match accepted and stored as CANDIDATE original URL (not LLM raw).
+  7. REFUTES without valid source_urls is uncited diagnostic, not a cited refutation.
   8. No "llm_batch" runtime use in src/.
   9. No live OpenRouter calls in tests.
+ 10. LLM prompt surface uses "evidence sources", not "supporting sources".
 """
 from __future__ import annotations
 
+import os
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -26,12 +38,19 @@ from hermes_deepresearch import _filter_source_urls_to_candidates, verify_source
 
 # === 1. Helper-level acceptance tests (filter / canonical / dedup) ===
 
-def test_accepts_canonical_match_returns_original():
-    """AC #6: canonical match accepted, original URL returned."""
+def test_canonical_match_returns_candidate_original_url():
+    """AC #6 (B2): canonical match accepted, candidate's ORIGINAL URL returned (not LLM raw).
+
+    candidate: https://Example.com/Page (note mixed case)
+    LLM raw:   https://example.com/Page?utm_source=x
+    After canonical match → return the CANDIDATE'S ORIGINAL URL, not the LLM raw.
+    This prevents the LLM from injecting tracking params / fragments into the
+    final citation string.
+    """
     cands = [{"url": "https://Example.com/Page", "text": "t1"}]
     raw = ["https://example.com/Page?utm_source=x"]
     got = _filter_source_urls_to_candidates(raw, cands)
-    assert got == ["https://example.com/Page?utm_source=x"], f"got={got}"
+    assert got == ["https://Example.com/Page"], f"got={got}"
 
 
 def test_rejects_url_not_in_source_candidates():
@@ -56,7 +75,12 @@ def test_rejects_non_http_schemes():
 
 
 def test_dedupes_canonical_duplicates_preserves_first():
-    """Same canonical, multiple raw forms: first accepted, rest rejected."""
+    """Same canonical, multiple raw forms: first candidate wins, rest rejected.
+
+    B2: the returned URL is the CANDIDATE'S ORIGINAL, not the LLM raw. The
+    first candidate with a given canonical is the one that gets stored
+    (matches the URL actually fetched by the search/fetch pipeline).
+    """
     cands = [{"url": "https://example.com/Page", "text": "t1"}]
     raw = [
         "https://example.com/Page",
@@ -66,6 +90,7 @@ def test_dedupes_canonical_duplicates_preserves_first():
     ]
     got = _filter_source_urls_to_candidates(raw, cands)
     assert len(got) == 1, f"got={got}"
+    # Candidate original is the un-annotated canonical form (no utm, no fragment).
     assert got[0] == "https://example.com/Page", f"got={got}"
 
 
@@ -77,13 +102,17 @@ def test_empty_inputs():
     assert _filter_source_urls_to_candidates([], []) == []
 
 
-def test_strips_tracking_params_for_match_keeps_original():
-    """AC #6: canonical match (tracking params stripped) but original preserved."""
+def test_strips_tracking_params_for_match_returns_candidate_original():
+    """AC #6 (B2): canonical match (tracking params stripped) → candidate original returned.
+
+    B1 returned the LLM raw URL (with utm/fragment). B2 returns the CANDIDATE'S
+    ORIGINAL URL instead — the LLM's tracking params are dropped.
+    """
     cands = [{"url": "https://example.com/Page", "text": "t1"}]
     raw = ["https://example.com/Page?utm_medium=email&fbclid=abc#section"]
     got = _filter_source_urls_to_candidates(raw, cands)
-    # original raw URL (with utm, fragment) is returned, not the canonical
-    assert got == ["https://example.com/Page?utm_medium=email&fbclid=abc#section"], f"got={got}"
+    # Candidate original (no utm, no fragment) is returned, not the LLM raw.
+    assert got == ["https://example.com/Page"], f"got={got}"
 
 
 # === 2. Integration: verify_sources() with monkeypatched LLM ===
@@ -285,12 +314,16 @@ def test_source_urls_not_in_candidates_rejected():
             assert d["source_urls"] == []
 
 
-def test_canonical_match_accepted_original_preserved():
-    """AC #6: LLM cites a canonical-equivalent URL → accepted, original stored.
+def test_canonical_match_integration_stores_candidate_original():
+    """AC #6 (B2): LLM cites a canonical-equivalent URL → stored as CANDIDATE original.
 
     Path/host must match exactly after canonicalization (case-sensitive
     path is significant — /Article and /article are different pages).
     Only the tracking params and host-case differ.
+
+    B2 invariant: the supporting_source entry is the CANDIDATE'S URL
+    (https://candidates.example.com/article) — the LLM's utm_source=llm
+    is dropped, not stored.
     """
     data = _make_top1_with_fact("5 дронов")
     # LLM cites URL with tracking params; canonical = candidate canonical
@@ -312,13 +345,21 @@ def test_canonical_match_accepted_original_preserved():
     assert out["llm_verified_count"] >= 1, f"got llm_verified_count={out['llm_verified_count']}"
     verified = [d for d in out["verification_details"] if d["verified"]]
     assert len(verified) >= 1
-    # The supporting source should be the ORIGINAL URL (with utm), not canonical
+    # B2: the supporting source must be the CANDIDATE'S ORIGINAL URL (without utm).
     srcs = [s[0] for s in verified[0]["supporting_sources"]]
-    assert any("utm_source=llm" in s for s in srcs), f"srcs={srcs}"
+    assert "https://candidates.example.com/article" in srcs, f"srcs={srcs}"
+    # LLM's utm must NOT have leaked into the stored citation.
+    assert not any("utm_source=llm" in s for s in srcs), f"LLM utm leaked into citation: {srcs}"
 
 
-def test_refutes_without_source_urls_not_cited():
-    """AC #7: REFUTES + [] => verdict=REFUTES, but not in refuting_sources."""
+def test_refutes_without_source_urls_is_uncited_diagnostic():
+    """AC #7 (B2): REFUTES + [] => verdict=REFUTES as UNCITED DIAGNOSTIC, not cited refutation.
+
+    B2 wording clarification: the LLM's REFUTES verdict is preserved as
+    diagnostic signal (and llm_unlinked_refute_count is incremented), but
+    no URL is stored in refuting_sources, so this fact cannot be used as
+    a cited refutation downstream.
+    """
     data = _make_top1_with_fact("5 дронов")
     stub = [
         {
@@ -335,11 +376,12 @@ def test_refutes_without_source_urls_not_cited():
             use_llm=True,
             max_facts=3,
         )
-    # verdict=REFUTES, but refuting_sources is empty
+    # verdict=REFUTES (preserved as diagnostic), but refuting_sources is empty
     refute = [d for d in out["verification_details"] if d["verdict"] == "REFUTES"]
     assert len(refute) >= 1, f"no REFUTES: {out['verification_details']}"
     assert refute[0]["refuting_sources"] == [], (
-        f"REFUTES без valid source_urls should not be cited: {refute[0]['refuting_sources']}"
+        f"REFUTES без valid source_urls is uncited diagnostic, "
+        f"must not appear in refuting_sources: {refute[0]['refuting_sources']}"
     )
     assert "llm_batch" not in refute[0]["refuting_sources"]
     assert out["llm_unlinked_refute_count"] >= 1
@@ -367,6 +409,68 @@ def test_refutes_with_valid_source_url_cited():
     assert len(refute) >= 1
     assert "https://candidates.example.com/article" in refute[0]["refuting_sources"]
     assert "llm_batch" not in refute[0]["refuting_sources"]
+
+
+# === 3. Prompt wording: "evidence sources", not "supporting sources" ===
+
+def test_prompt_uses_evidence_sources_wording():
+    """AC #1 / #10 (B2): LLM prompt surface uses 'evidence sources', not 'supporting sources'.
+
+    We intercept the actual HTTP body sent to OpenRouter by patching
+    LLMVerifier._call_with_fallback to capture the body, then run
+    verify_facts_batch and assert on the user-prompt text.
+    """
+    from llm_verifier import LLMVerifier
+
+    captured: dict = {}
+
+    def fake_call_with_fallback(self, body, timeout=20.0):
+        # Save the user message text for assertion
+        captured["user"] = body["messages"][1]["content"]
+        # Count facts in the body to build a matching response
+        n_facts = max(
+            1,
+            len(re.findall(r'^\d+\. "', body["messages"][1]["content"], flags=re.MULTILINE)),
+        )
+        return (
+            body.get("model", "stub"),
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"results": '
+                            + ",".join(
+                                f'{{"index": {i + 1}, "verdict": "INSUFFICIENT", "reasoning": "stub", "source_urls": []}}'
+                                for i in range(n_facts)
+                            )
+                            + "}"
+                        }
+                    }
+                ]
+            },
+        )
+
+    with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-stub-for-test"}):
+        with patch.object(LLMVerifier, "_call_with_fallback", fake_call_with_fallback):
+            verifier = LLMVerifier()
+            verifier.verify_facts_batch(
+                facts=["факт 1", "факт 2"],
+                source_candidates=[{"url": "https://example.com/page", "text": "some text"}],
+            )
+
+    user_prompt = captured.get("user", "")
+    assert user_prompt, "user prompt was not captured by fake_call_with_fallback"
+    # B2 invariants:
+    assert "supporting sources" not in user_prompt.lower(), (
+        f"forbidden wording 'supporting sources' in LLM prompt: {user_prompt!r}"
+    )
+    assert "Evidence sources:" in user_prompt, (
+        f"required 'Evidence sources:' block missing in LLM prompt: {user_prompt!r}"
+    )
+    # Also assert the header sentence uses the new wording.
+    assert "evidence sources below" in user_prompt, (
+        f"required 'evidence sources below' phrase missing in LLM prompt: {user_prompt!r}"
+    )
 
 
 def test_no_llm_batch_runtime_use():

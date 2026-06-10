@@ -992,32 +992,39 @@ def _is_negated(fact: str, text: str) -> bool:
 
 # v0.8.2-B1 (reviewer-9): whitelist helper.
 # Принимает только URL, которые canonicalize к одному из source_candidates.
-# Возвращает ОРИГИНАЛЬНЫЕ URL (не canonical), в порядке input.
-# Это критично для citation integrity: LLM может вернуть любой URL,
-# мы принимаем только те, что совпадают с реально прочитанными sources.
+# v0.8.2-B2 (reviewer-9): возвращает ОРИГИНАЛЬНЫЕ URL кандидатов (НЕ LLM raw).
+# v0.8.2-B1 ранее возвращал LLM raw URL после canonical-match — это позволяло LLM
+# контролировать финальную строку цитаты (utm, fragment, case). B2 фиксит: после
+# whitelist matching citation URL всегда равен candidate.original (как хранится в
+# source_candidates), чтобы LLM не мог «дописать» tracking/мусор в финальную ссылку.
 def _filter_source_urls_to_candidates(
     raw_urls: list[str],
     source_candidates: list[dict],
 ) -> list[str]:
     """
-    Returns subset of raw_urls that canonicalize to one of source_candidates.
+    Returns subset of candidate URLs whose canonical form matches at least
+    one LLM-emitted raw URL.
 
-    Each accepted URL is the ORIGINAL raw URL (not the canonical form),
-    so downstream citation storage uses what the LLM actually emitted
-    (preserving query params, fragments, etc. that are real).
+    Each accepted URL is the CANDIDATE'S ORIGINAL URL (the one actually
+    stored in source_candidates, preserving its real query/fragment/case),
+    NOT the LLM-emitted raw URL. This is critical for citation integrity:
+    the LLM should not be able to inject tracking params, fragments, or
+    case-variants into the final citation string. The LLM's URL is only
+    used to authorize the match; the candidate's URL is what gets stored.
 
     Defensive rules:
-      - Skip empty / non-string entries
+      - Skip empty / non-string entries (in both raw_urls and candidates)
       - Skip URLs that don't parse (urlsplit fails)
       - Skip URLs whose scheme is not http/https
       - Skip URLs whose canonical form is empty
-      - Preserve order, dedup within the result
+      - Preserve order of FIRST occurrence of each canonical in raw_urls;
+        dedup within the result by canonical
     """
     if not raw_urls or not source_candidates:
         return []
 
-    # Pre-compute canonical forms of candidates (deduped)
-    cand_canonicals: set[str] = set()
+    # Pre-compute canonical → candidate-original map (deduped; first wins).
+    cand_canon_to_original: dict[str, str] = {}
     for c in source_candidates:
         c_url = c.get("url", "") if isinstance(c, dict) else ""
         if not c_url:
@@ -1026,10 +1033,13 @@ def _filter_source_urls_to_candidates(
             cn = canonical_url(c_url)
         except Exception:  # noqa: S112 — defensive: skip malformed URL
             continue
-        if cn:
-            cand_canonicals.add(cn)
+        if not cn:
+            continue
+        # First candidate with this canonical wins (preserves the URL that
+        # was actually fetched and stored in the search/fetch pipeline).
+        cand_canon_to_original.setdefault(cn, c_url)
 
-    if not cand_canonicals:
+    if not cand_canon_to_original:
         return []
 
     accepted: list[str] = []
@@ -1055,13 +1065,13 @@ def _filter_source_urls_to_candidates(
             cn = canonical_url(u)
         except Exception:  # noqa: S112 — defensive: skip unparsable
             continue
-        if not cn or cn not in cand_canonicals:
+        if not cn or cn not in cand_canon_to_original:
             continue
-        # Dedup within accepted list
         if cn in seen:
             continue
         seen.add(cn)
-        accepted.append(u)
+        # v0.8.2-B2: store the CANDIDATE'S ORIGINAL URL, not the LLM raw URL.
+        accepted.append(cand_canon_to_original[cn])
         if len(accepted) >= 5:
             break
     return accepted

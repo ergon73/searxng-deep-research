@@ -284,7 +284,7 @@ class LLMVerifier:
         per_source_window_size: int = 300,
         per_source_max_total: int = 1500,
     ) -> str:
-        """Render the 'Supporting sources:' block for the LLM prompt.
+        """Render the 'Evidence sources:' block for the LLM prompt.
 
         For each source, we extract evidence windows around ANY of the
         facts (so a single source can serve multiple facts). Windows
@@ -346,7 +346,7 @@ class LLMVerifier:
         Batch verify multiple facts in one LLM call.
 
         facts: list of fact strings (e.g. extracted from top-1)
-        source_candidates: [{"url": "...", "text": "..."}, ...] — supporting sources
+        source_candidates: [{"url": "...", "text": "..."}, ...] — evidence sources
 
         Returns: list of dicts, one per fact:
             {
@@ -383,9 +383,9 @@ class LLMVerifier:
             "Return JSON only, no extra text."
         )
         prompt_user = (
-            f"Verify each fact against the supporting sources below.\n\n"
+            f"Verify each fact against the evidence sources below.\n\n"
             f"Facts:\n{facts_block}\n\n"
-            f"Supporting sources:\n{sources_block}\n\n"
+            f"Evidence sources:\n{sources_block}\n\n"
             f'Reply JSON: {{"results": [{{"index": 1, "verdict": "SUPPORTS"|"REFUTES"|"INSUFFICIENT", "reasoning": "<short>", "source_urls": [...]}}]}}'
         )
 

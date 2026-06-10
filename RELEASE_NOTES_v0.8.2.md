@@ -268,18 +268,21 @@ ship a `.env_llm`".
 
 ## CI
 
-All 4 stack commits pushed to `main`, all CI runs green:
+All 5 commits in this release pushed to `main`, all CI runs green:
 
 | Commit | Run | Status |
 |--------|-----|--------|
-| `9bd0bc7` (v0.8.2-A)  | [run 27220266692](https://github.com/ergon73/searxng-deep-research/actions/runs/27220266692) | success |
-| `64b7047` (v0.8.2-B1) | [run 27225501055](https://github.com/ergon73/searxng-deep-research/actions/runs/27225501055) | success |
-| `9eb9803` (v0.8.2-B2) | [run 27257014232](https://github.com/ergon73/searxng-deep-research/actions/runs/27257014232) | success |
-| `653b01a` (v0.8.2-C1) | [run 27269163632](https://github.com/ergon73/searxng-deep-research/actions/runs/27269163632) | success |
+| `9bd0bc7` (v0.8.2-A)              | [run 27220266692](https://github.com/ergon73/searxng-deep-research/actions/runs/27220266692) | success |
+| `64b7047` (v0.8.2-B1)             | [run 27225501055](https://github.com/ergon73/searxng-deep-research/actions/runs/27225501055) | success |
+| `9eb9803` (v0.8.2-B2)             | [run 27257014232](https://github.com/ergon73/searxng-deep-research/actions/runs/27257014232) | success |
+| `653b01a` (v0.8.2-C1)             | [run 27269163632](https://github.com/ergon73/searxng-deep-research/actions/runs/27269163632) | success |
+| `0e01d2c` (v0.8.2 release prep)   | [run 27270532884](https://github.com/ergon73/searxng-deep-research/actions/runs/27270532884) | success |
 
-The release-prep commit (this file + version bump) will be pushed
-after this notes file is finalised; the next CI run will cover the
-release-prep commit and will not change the version stamp.
+The release-prep commit (`0e01d2c`) updates `pyproject.toml`,
+`README.md`, `AGENTS.md`, and this release-notes file. It does not
+change code, tests, providers, pipeline shape, or runtime behaviour.
+The annotated tag `v0.8.2` will be created on this release-prep
+commit after explicit user approval (see note on tag target below).
 
 ---
 

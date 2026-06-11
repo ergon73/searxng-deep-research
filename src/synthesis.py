@@ -621,22 +621,36 @@ def _classify_claim_for_user(
     return "unverifiable"
 
 
-def _short_answer(query: str, coverage: dict, contradictions: list[dict]) -> str:
-    """One-paragraph synopsis: query + coverage score + contradiction count."""
+def _short_answer(
+    query: str,
+    confirmed_count: int,
+    weak_count: int,
+    contradiction_count: int,
+    unverified_count: int,
+) -> str:
+    """One-paragraph synopsis built from user-facing bucket counts.
+
+    v0.8.3-B1: must NOT use raw coverage.supported/partial/total. Those
+    counts predate the routing logic and treat SUPPORTS-without-citation
+    as confirmed. The user-facing synopsis must reflect what the buckets
+    above actually say: confirmed means "Подтверждено источниками", etc.
+    """
     q = _md_escape(query or "")
-    total = coverage.get("total", 0)
-    supported = coverage.get("supported", 0)
-    partial = coverage.get("partial", 0)
-    score = coverage.get("score", 0.0)
-    n_contra = len(contradictions or [])
+    total = confirmed_count + weak_count + contradiction_count + unverified_count
     if total == 0:
         return f"Вопрос: _{q}_.\n\nНедостаточно данных для ответа."
-    base = f"Вопрос: _{q}_.\n\nПокрытие: **{supported}/{total}** утверждений подтверждено (score {score:.0%}"
-    if partial:
-        base += f", частично {partial}/{total}"
+    n_contra = contradiction_count
+    base = f"Вопрос: _{q}_.\n\nПокрытие: **{confirmed_count}/{total}** утверждений подтверждено"
+    extras: list[str] = []
+    if weak_count:
+        extras.append(f"слабых {weak_count}/{total}")
+    if unverified_count:
+        extras.append(f"не проверено {unverified_count}/{total}")
+    if extras:
+        base += " (" + ", ".join(extras) + ")"
     if n_contra:
         base += f", противоречий {n_contra}"
-    base += ")."
+    base += "."
     return base
 
 
@@ -648,9 +662,9 @@ def _render_user_markdown(
     coverage: dict,
     contradictions: list[dict],
 ) -> str:
-    """v0.8.3-B: user-facing answer with 6 sections.
+    """v0.8.3-B / B1: user-facing answer with 6 always-rendered sections.
 
-    Sections (AC #3):
+    Sections (AC #3 + B1):
       1. Краткий ответ
       2. Подтверждено источниками
       3. Слабые или неподтверждённые сигналы
@@ -658,19 +672,23 @@ def _render_user_markdown(
       5. Что не удалось проверить
       6. Источники
 
-    Routing rules (AC #4 + #5):
-      - SUPPORTS + resolvable citation marker → "Подтверждено источниками"
-      - SUPPORTS without citation marker → "Слабые или неподтверждённые сигналы"
-      - WEAK_SUPPORT → "Слабые или неподтверждённые сигналы" (weak, not confirmed)
-      - REFUTES, CONFLICTING, NUMERIC_MISMATCH → "Противоречия / расхождения"
-      - INSUFFICIENT, None → "Что не удалось проверить"
-    """
-    if not results and not claims:
-        return "_Нет данных для ответа._"
+    B1: every section is always rendered. Empty buckets get a `_нет_`
+    placeholder so the user can see at a glance that a category was
+    considered and yielded no items (vs the section being absent by
+    accident).
 
+    Routing rules (AC #4 + #5 + B1):
+      - SUPPORTS + resolvable citation marker → "Подтверждено источниками"
+      - SUPPORTS without citation marker      → "Слабые или неподтверждённые сигналы"
+      - WEAK_SUPPORT                          → "Слабые или неподтверждённые сигналы"
+      - REFUTES, CONFLICTING, NUMERIC_MISMATCH → "Противоречия / расхождения"
+      - INSUFFICIENT, None                    → "Что не удалось проверить"
+    """
     url_to_id = _build_url_to_id(citations)
 
-    # Bucket claims by route
+    # Bucket claims by route. Bullet lists are populated by the loop; the
+    # bucket *counts* are derived from len() so the short-answer synopsis
+    # agrees with what the user actually sees below.
     confirmed: list[str] = []  # bullets with citation markers
     weak: list[str] = []  # bullets, no claim-of-confirmation
     contradiction_bullets: list[str] = []
@@ -708,39 +726,49 @@ def _render_user_markdown(
         else:  # unverifiable
             unverifiable.append(f"- {claim_esc} — _не удалось проверить_")
 
-    # --- render
+    # v0.8.3-B1: short answer synopsis uses user-bucket counts, not raw coverage.
+    short = _short_answer(
+        query=query,
+        confirmed_count=len(confirmed),
+        weak_count=len(weak),
+        contradiction_count=len(contradiction_bullets),
+        unverified_count=len(unverifiable),
+    )
+
+    # v0.8.3-B1: always render all 6 sections, with `_нет_` placeholders
+    # for empty buckets. `coverage` is kept in the signature for BC; it
+    # is no longer used by the user renderer.
+    del coverage  # silence unused-arg lint
     parts: list[str] = []
     # 1. Краткий ответ
-    parts.append(f"## Краткий ответ\n\n{_short_answer(query, coverage, contradictions)}\n")
+    parts.append(f"## Краткий ответ\n\n{short}\n")
     # 2. Подтверждено источниками
-    if confirmed:
-        parts.append("\n## Подтверждено источниками\n")
-        parts.extend(confirmed)
-        parts.append("")
+    parts.append("\n## Подтверждено источниками\n")
+    parts.extend(confirmed or ["_нет_"])
+    parts.append("")
     # 3. Слабые или неподтверждённые сигналы
-    if weak:
-        parts.append("\n## Слабые или неподтверждённые сигналы\n")
-        parts.extend(weak)
-        parts.append("")
+    parts.append("\n## Слабые или неподтверждённые сигналы\n")
+    parts.extend(weak or ["_нет_"])
+    parts.append("")
     # 4. Противоречия / расхождения
-    if contradiction_bullets:
-        parts.append("\n## Противоречия / расхождения\n")
-        parts.extend(contradiction_bullets)
-        parts.append("")
+    parts.append("\n## Противоречия / расхождения\n")
+    parts.extend(contradiction_bullets or ["_нет_"])
+    parts.append("")
     # 5. Что не удалось проверить
-    if unverifiable:
-        parts.append("\n## Что не удалось проверить\n")
-        parts.extend(unverifiable)
-        parts.append("")
+    parts.append("\n## Что не удалось проверить\n")
+    parts.extend(unverifiable or ["_нет_"])
+    parts.append("")
     # 6. Источники
+    parts.append("\n## Источники\n")
     if citations:
-        parts.append("\n## Источники\n")
         for c in citations:
             title = _md_escape(c.title or c.url)
             parts.append(f"- [{c.id}] [{title}]({c.url})")
             if c.quote:
                 parts.append(f"  > {_md_escape(_truncate(c.quote, MAX_QUOTE_CHARS))}")
-        parts.append("")
+    else:
+        parts.append("_нет_")
+    parts.append("")
 
     md = "\n".join(parts)
     if len(md) > MAX_MARKDOWN_CHARS:

@@ -33,6 +33,37 @@ except ImportError:  # RED phase — T2 will add it
     VERDICT_WEAK_SUPPORT = "WEAK_SUPPORT"
 
 
+# --- helpers ---------------------------------------------------------------
+
+
+def next_sec(sections: list[str], current: str) -> str | None:
+    """Return the section that follows `current` in `sections`, or None."""
+    try:
+        i = sections.index(current)
+    except ValueError:
+        return None
+    if i + 1 >= len(sections):
+        return None
+    return sections[i + 1]
+
+
+def md_block(md: str, start: str, end: str | None) -> str:
+    """Slice a markdown block from `start` header to (exclusive) `end` header.
+
+    If `end` is None, the block runs to the end of the markdown.
+    """
+    s = md.find(start)
+    if s < 0:
+        return ""
+    body = md[s + len(start):]
+    if end is None:
+        return body
+    e = body.find(end)
+    if e < 0:
+        return body
+    return body[:e]
+
+
 # --- fixtures ---------------------------------------------------------------
 
 
@@ -58,6 +89,63 @@ class TestUserSections:
         "## Что не удалось проверить",
         "## Источники",
     ]
+
+    def test_answer_markdown_always_has_all_sections_even_when_empty(self,
+                                                                    two_sources):
+        """v0.8.3-B1: every user section must render even if its bucket is empty."""
+        # Only one confirmed claim, rest buckets empty
+        results = [
+            {"fact": "cited fact", "verdict": VERDICT_SUPPORTS, "reasoning": "ok",
+             "source_urls": ["http://a.com/x"]},
+        ]
+        s = synthesize(query="q", claims=["cited fact"], results=results,
+                       source_candidates=two_sources)
+        md = s.answer_markdown
+        for sec in self.REQUIRED_SECTIONS:
+            assert sec in md, (
+                f"section {sec!r} missing in answer_markdown:\n{md}"
+            )
+
+    def test_only_confirmed_result_still_renders_empty_weak_contradiction_unverified_sections(
+        self, two_sources
+    ):
+        """v0.8.3-B1: empty buckets render with explicit 'нет' placeholder."""
+        results = [
+            {"fact": "cited fact", "verdict": VERDICT_SUPPORTS, "reasoning": "ok",
+             "source_urls": ["http://a.com/x"]},
+        ]
+        s = synthesize(query="q", claims=["cited fact"], results=results,
+                       source_candidates=two_sources)
+        # All 4 claim-bucket sections must contain a placeholder when empty.
+        for sec, placeholder in (
+            ("## Слабые или неподтверждённые сигналы", "_нет_"),
+            ("## Противоречия / расхождения", "_нет_"),
+            ("## Что не удалось проверить", "_нет_"),
+        ):
+            block = md_block(s.answer_markdown, sec,
+                             next_sec(self.REQUIRED_SECTIONS, sec))
+            assert placeholder in block, (
+                f"empty bucket for {sec!r} should have placeholder, got:\n{block}"
+            )
+
+    def test_no_sources_still_renders_sources_section_with_placeholder(
+        self, two_sources
+    ):
+        """v0.8.3-B1: empty sources section renders a placeholder, not absent."""
+        results = [
+            {"fact": "c1", "verdict": VERDICT_SUPPORTS, "reasoning": "ok",
+             "source_urls": []},
+        ]
+        s = synthesize(query="q", claims=["c1"], results=results,
+                       source_candidates=[])  # no source candidates
+        block = md_block(s.answer_markdown,
+                         "## Источники", None)
+        # Section header must be present
+        assert "## Источники" in s.answer_markdown
+        # No citation [1] should appear (no sources)
+        assert "[1]" not in block
+        # And there should be a placeholder
+        assert "_нет_" in block
 
     def test_answer_markdown_has_user_sections(self, two_sources):
         """v0.8.3-B AC #3: с входом, который активирует все 4 секции routing,
@@ -313,3 +401,55 @@ class TestWeakSupportUX:
         )
         # The WEAK_SUPPORT case must have lower or equal confidence
         assert b.confidence <= a.confidence
+
+    def test_supports_without_citation_does_not_increase_short_answer_confirmed_count(
+        self, two_sources
+    ):
+        """v0.8.3-B1: SUPPORTS without resolvable citation must NOT count as
+        confirmed in the short-answer synopsis. It belongs to the weak bucket.
+        """
+        import re
+
+        # Single SUPPORTS but source_urls=[] (unresolvable citation) — weak
+        weak_case = synthesize(
+            query="q", claims=["c"],
+            results=[{"fact": "c", "verdict": VERDICT_SUPPORTS,
+                      "source_urls": []}],
+            source_candidates=two_sources,
+        )
+        short_weak = md_block(weak_case.answer_markdown,
+                              "## Краткий ответ",
+                              "## Подтверждено источниками")
+        # The "Покрытие: N/M" must show 0 confirmed out of 1 total
+        m = re.search(r"Покрытие:\s*\*\*(\d+)/(\d+)\*\*", short_weak)
+        assert m is not None, f"no Покрытие marker in short: {short_weak!r}"
+        confirmed, total = int(m.group(1)), int(m.group(2))
+        assert (confirmed, total) == (0, 1), (
+            f"uncited SUPPORTS counted as {confirmed}/{total} confirmed, "
+            f"expected 0/1: {short_weak!r}"
+        )
+        # And the weak bucket must show the claim
+        weak_block = md_block(weak_case.answer_markdown,
+                              "## Слабые или неподтверждённые сигналы",
+                              "## Противоречия / расхождения")
+        assert "c" in weak_block, (
+            f"uncited SUPPORTS should land in weak bucket, got: {weak_block!r}"
+        )
+
+        # Sanity: a true SUPPORTS+citation DOES count as confirmed.
+        cited_case = synthesize(
+            query="q", claims=["c"],
+            results=[{"fact": "c", "verdict": VERDICT_SUPPORTS,
+                      "source_urls": ["http://a.com/x"]}],
+            source_candidates=two_sources,
+        )
+        short_cited = md_block(cited_case.answer_markdown,
+                               "## Краткий ответ",
+                               "## Подтверждено источниками")
+        m2 = re.search(r"Покрытие:\s*\*\*(\d+)/(\d+)\*\*", short_cited)
+        assert m2 is not None, f"no Покрытие marker in cited short: {short_cited!r}"
+        confirmed2, total2 = int(m2.group(1)), int(m2.group(2))
+        assert (confirmed2, total2) == (1, 1), (
+            f"cited SUPPORTS should be {confirmed2}/{total2}, expected 1/1: "
+            f"{short_cited!r}"
+        )

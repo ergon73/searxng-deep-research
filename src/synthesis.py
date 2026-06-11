@@ -58,11 +58,15 @@ VERDICT_REFUTES = "REFUTES"
 VERDICT_INSUFFICIENT = "INSUFFICIENT"
 VERDICT_CONFLICTING = "CONFLICTING"
 VERDICT_NUMERIC_MISMATCH = "NUMERIC_MISMATCH"
+# v0.8.3-B: WEAK_SUPPORT — SUPPORTS without accepted citation. Treated as
+# "слабый сигнал, не подтверждено источниками" in user answer.
+VERDICT_WEAK_SUPPORT = "WEAK_SUPPORT"
 
 VERDICTS_POSITIVE = {VERDICT_SUPPORTS}
 VERDICTS_NEGATIVE = {VERDICT_REFUTES}
 VERDICTS_NEUTRAL = {VERDICT_INSUFFICIENT, None}
 VERDICTS_CONFLICT = {VERDICT_CONFLICTING, VERDICT_NUMERIC_MISMATCH}
+VERDICTS_WEAK = {VERDICT_WEAK_SUPPORT}
 
 # Hard limits (prompt-injection defense)
 MAX_QUOTE_CHARS = 200
@@ -110,9 +114,18 @@ class Citation:
 
 @dataclass
 class Synthesis:
-    """Финальный structured output synthesis layer."""
+    """Финальный structured output synthesis layer.
+
+    v0.8.3-B: split user-facing answer (`answer_markdown`) from the
+    detailed per-claim audit breakdown (`audit_markdown`). The old
+    "## Ответ + Детали по утверждениям" layout was useful for review
+    but useless for end users — they get a 6-section structured
+    answer instead, while the old breakdown moves to audit_markdown.
+    """
 
     answer_markdown: str
+    # v0.8.3-B: old per-claim breakdown (audit/review use only).
+    audit_markdown: str = ""
     citations: list[Citation] = field(default_factory=list)
     coverage: dict = field(default_factory=dict)
     contradictions: list[dict] = field(default_factory=list)
@@ -126,6 +139,7 @@ class Synthesis:
     def to_dict(self) -> dict:
         return {
             "answer_markdown": self.answer_markdown,
+            "audit_markdown": self.audit_markdown,
             "citations": [c.to_dict() for c in self.citations],
             "coverage": self.coverage,
             "contradictions": self.contradictions,
@@ -467,7 +481,7 @@ def _format_citation_markers(
     return "".join(f"[{cid}]" for cid in sorted(ids))
 
 
-def _render_markdown(
+def _render_audit_markdown(
     query: str,
     claims: list[str],
     results: list[dict],
@@ -476,9 +490,14 @@ def _render_markdown(
     contradictions: list[dict],
     open_questions: list[str],
 ) -> str:
-    """Build final answer_markdown. Pure deterministic."""
+    """Audit/review breakdown: per-claim details. v0.8.3-B: moved out of user view.
+
+    The user-facing answer no longer carries this breakdown — it is verbose
+    and designed for review, not for end users. It is preserved here as
+    `Synthesis.audit_markdown` for post-hoc debugging and review tools.
+    """
     if not results and not claims:
-        return "_Нет данных для ответа._"
+        return "_Нет данных для аудита._"
 
     url_to_id = _build_url_to_id(citations)
 
@@ -569,6 +588,194 @@ def _render_markdown(
     return md
 
 
+# --- v0.8.3-B: user-facing answer renderer ---------------------------------
+
+
+def _classify_claim_for_user(
+    claim: str,
+    result: dict,
+    url_to_id: dict[str, int],
+) -> str:
+    """Route a claim to one of: 'confirmed' | 'weak' | 'contradiction' | 'unverifiable'.
+
+    Routing (AC #4):
+      - SUPPORTS with at least one url that resolves to a citation id → 'confirmed'
+      - WEAK_SUPPORT or SUPPORTS without a resolvable citation → 'weak'
+      - REFUTES, CONFLICTING, NUMERIC_MISMATCH → 'contradiction'
+      - INSUFFICIENT, None → 'unverifiable'
+    """
+    verdict = result.get("verdict")
+    if verdict in (VERDICT_REFUTES, VERDICT_CONFLICTING, VERDICT_NUMERIC_MISMATCH):
+        return "contradiction"
+    if verdict in (VERDICT_INSUFFICIENT, None):
+        return "unverifiable"
+    if verdict == VERDICT_WEAK_SUPPORT:
+        return "weak"
+    if verdict == VERDICT_SUPPORTS:
+        supporting = _collect_supporting_urls(result)
+        # Has at least one url that resolved to a citation id?
+        if any(url_to_id.get(u) for u in supporting):
+            return "confirmed"
+        return "weak"
+    # Unknown verdict → unverifiable (defensive default)
+    return "unverifiable"
+
+
+def _short_answer(
+    query: str,
+    confirmed_count: int,
+    weak_count: int,
+    contradiction_count: int,
+    unverified_count: int,
+) -> str:
+    """One-paragraph synopsis built from user-facing bucket counts.
+
+    v0.8.3-B1: must NOT use raw coverage.supported/partial/total. Those
+    counts predate the routing logic and treat SUPPORTS-without-citation
+    as confirmed. The user-facing synopsis must reflect what the buckets
+    above actually say: confirmed means "Подтверждено источниками", etc.
+    """
+    q = _md_escape(query or "")
+    total = confirmed_count + weak_count + contradiction_count + unverified_count
+    if total == 0:
+        return f"Вопрос: _{q}_.\n\nНедостаточно данных для ответа."
+    n_contra = contradiction_count
+    base = f"Вопрос: _{q}_.\n\nПокрытие: **{confirmed_count}/{total}** утверждений подтверждено"
+    extras: list[str] = []
+    if weak_count:
+        extras.append(f"слабых {weak_count}/{total}")
+    if unverified_count:
+        extras.append(f"не проверено {unverified_count}/{total}")
+    if extras:
+        base += " (" + ", ".join(extras) + ")"
+    if n_contra:
+        base += f", противоречий {n_contra}"
+    base += "."
+    return base
+
+
+def _render_user_markdown(
+    query: str,
+    claims: list[str],
+    results: list[dict],
+    citations: list[Citation],
+    coverage: dict,
+    contradictions: list[dict],
+) -> str:
+    """v0.8.3-B / B1: user-facing answer with 6 always-rendered sections.
+
+    Sections (AC #3 + B1):
+      1. Краткий ответ
+      2. Подтверждено источниками
+      3. Слабые или неподтверждённые сигналы
+      4. Противоречия / расхождения
+      5. Что не удалось проверить
+      6. Источники
+
+    B1: every section is always rendered. Empty buckets get a `_нет_`
+    placeholder so the user can see at a glance that a category was
+    considered and yielded no items (vs the section being absent by
+    accident).
+
+    Routing rules (AC #4 + #5 + B1):
+      - SUPPORTS + resolvable citation marker → "Подтверждено источниками"
+      - SUPPORTS without citation marker      → "Слабые или неподтверждённые сигналы"
+      - WEAK_SUPPORT                          → "Слабые или неподтверждённые сигналы"
+      - REFUTES, CONFLICTING, NUMERIC_MISMATCH → "Противоречия / расхождения"
+      - INSUFFICIENT, None                    → "Что не удалось проверить"
+    """
+    url_to_id = _build_url_to_id(citations)
+
+    # Bucket claims by route. Bullet lists are populated by the loop; the
+    # bucket *counts* are derived from len() so the short-answer synopsis
+    # agrees with what the user actually sees below.
+    confirmed: list[str] = []  # bullets with citation markers
+    weak: list[str] = []  # bullets, no claim-of-confirmation
+    contradiction_bullets: list[str] = []
+    unverifiable: list[str] = []
+
+    for i, r in enumerate(results or []):
+        claim = (r.get("fact") or (claims[i] if i < len(claims) else "")) or ""
+        claim_esc = _md_escape(_truncate(claim, 200))
+        if not claim_esc:
+            continue
+        route = _classify_claim_for_user(claim, r, url_to_id)
+        verdict = r.get("verdict")
+
+        if route == "confirmed":
+            supporting = _collect_supporting_urls(r)
+            markers = _format_citation_markers(supporting, url_to_id)
+            confirmed.append(f"- {claim_esc} {markers}".rstrip())
+        elif route == "weak":
+            # Phrase explicitly: not confirmed (AC #7)
+            if verdict == VERDICT_WEAK_SUPPORT:
+                weak.append(f"- {claim_esc} — _слабый сигнал, не подтверждено источниками_")
+            else:
+                # SUPPORTS without resolvable citation
+                weak.append(f"- {claim_esc} — _не подтверждено источниками_")
+        elif route == "contradiction":
+            # Attach citation markers from supporting+refuting+mismatch
+            urls = _collect_supporting_urls(r) + _collect_refuting_urls(r) + _collect_mismatch_urls(r)
+            markers = _format_citation_markers(urls, url_to_id)
+            label = {
+                VERDICT_REFUTES: "опровергнуто",
+                VERDICT_CONFLICTING: "противоречие",
+                VERDICT_NUMERIC_MISMATCH: "числовое расхождение",
+            }.get(verdict, "противоречие")
+            contradiction_bullets.append(f"- {claim_esc} — _{label}_ {markers}".rstrip())
+        else:  # unverifiable
+            unverifiable.append(f"- {claim_esc} — _не удалось проверить_")
+
+    # v0.8.3-B1: short answer synopsis uses user-bucket counts, not raw coverage.
+    short = _short_answer(
+        query=query,
+        confirmed_count=len(confirmed),
+        weak_count=len(weak),
+        contradiction_count=len(contradiction_bullets),
+        unverified_count=len(unverifiable),
+    )
+
+    # v0.8.3-B1: always render all 6 sections, with `_нет_` placeholders
+    # for empty buckets. `coverage` is kept in the signature for BC; it
+    # is no longer used by the user renderer.
+    del coverage  # silence unused-arg lint
+    parts: list[str] = []
+    # 1. Краткий ответ
+    parts.append(f"## Краткий ответ\n\n{short}\n")
+    # 2. Подтверждено источниками
+    parts.append("\n## Подтверждено источниками\n")
+    parts.extend(confirmed or ["_нет_"])
+    parts.append("")
+    # 3. Слабые или неподтверждённые сигналы
+    parts.append("\n## Слабые или неподтверждённые сигналы\n")
+    parts.extend(weak or ["_нет_"])
+    parts.append("")
+    # 4. Противоречия / расхождения
+    parts.append("\n## Противоречия / расхождения\n")
+    parts.extend(contradiction_bullets or ["_нет_"])
+    parts.append("")
+    # 5. Что не удалось проверить
+    parts.append("\n## Что не удалось проверить\n")
+    parts.extend(unverifiable or ["_нет_"])
+    parts.append("")
+    # 6. Источники
+    parts.append("\n## Источники\n")
+    if citations:
+        for c in citations:
+            title = _md_escape(c.title or c.url)
+            parts.append(f"- [{c.id}] [{title}]({c.url})")
+            if c.quote:
+                parts.append(f"  > {_md_escape(_truncate(c.quote, MAX_QUOTE_CHARS))}")
+    else:
+        parts.append("_нет_")
+    parts.append("")
+
+    md = "\n".join(parts)
+    if len(md) > MAX_MARKDOWN_CHARS:
+        md = md[:MAX_MARKDOWN_CHARS] + "\n\n_… truncated для безопасности._"
+    return md
+
+
 # --- main: deterministic synthesize() ---------------------------------------
 
 
@@ -581,6 +788,10 @@ def synthesize(
     """Deterministic synthesis builder.
 
     Pure stdlib, no LLM, no network. Безопасен для unit-тестов.
+
+    v0.8.3-B: returns Synthesis with two markdown fields:
+      - answer_markdown: user-facing 6-section answer (new)
+      - audit_markdown:  old per-claim breakdown (preserved for review)
 
     Args:
         query: original user query
@@ -609,8 +820,16 @@ def synthesize(
     # 6. Open questions
     open_questions = _build_open_questions(claims or [], results or [])
 
-    # 7. Markdown
-    answer_markdown = _render_markdown(
+    # 7. v0.8.3-B: two markdown renderers — user answer + audit breakdown
+    answer_markdown = _render_user_markdown(
+        query=query or "",
+        claims=claims or [],
+        results=results or [],
+        citations=citations,
+        coverage=coverage,
+        contradictions=contradictions,
+    )
+    audit_markdown = _render_audit_markdown(
         query=query or "",
         claims=claims or [],
         results=results or [],
@@ -622,6 +841,7 @@ def synthesize(
 
     return Synthesis(
         answer_markdown=answer_markdown,
+        audit_markdown=audit_markdown,
         citations=citations,
         coverage=coverage,
         contradictions=contradictions,
@@ -764,6 +984,8 @@ def enrich_with_llm(
     # Success
     return Synthesis(
         answer_markdown=enriched,
+        # v0.8.3-B: audit breakdown stays deterministic; LLM only rewrites user answer.
+        audit_markdown=base.audit_markdown,
         citations=base.citations,
         coverage=base.coverage,
         contradictions=base.contradictions,
@@ -787,6 +1009,7 @@ __all__ = [
     "VERDICT_INSUFFICIENT",
     "VERDICT_CONFLICTING",
     "VERDICT_NUMERIC_MISMATCH",
+    "VERDICT_WEAK_SUPPORT",
     "MAX_QUOTE_CHARS",
     "MAX_MARKDOWN_CHARS",
     "MAX_CITATIONS",

@@ -32,7 +32,7 @@ from synthesis import (
     _extract_quote,
     _find_contradictions,
     _md_escape,
-    _render_markdown,
+    _render_audit_markdown,
     _truncate,
     _url_to_title,
     _validate_enriched_markdown,
@@ -286,7 +286,7 @@ class TestOpenQuestions:
 
 class TestMarkdownRender:
     def test_contains_query(self):
-        md = _render_markdown(
+        md = _render_audit_markdown(
             query="What is X?",
             claims=["c1"],
             results=[{"fact": "c1", "verdict": "SUPPORTS", "reasoning": "ok",
@@ -299,7 +299,7 @@ class TestMarkdownRender:
         assert "What is X?" in md
 
     def test_citation_markers_in_text(self):
-        md = _render_markdown(
+        md = _render_audit_markdown(
             query="q",
             claims=["c1"],
             results=[{"fact": "c1", "verdict": "SUPPORTS", "reasoning": "ok",
@@ -312,7 +312,7 @@ class TestMarkdownRender:
         assert "[1]" in md
 
     def test_handles_empty_results(self):
-        md = _render_markdown(
+        md = _render_audit_markdown(
             query="q",
             claims=[],
             results=[],

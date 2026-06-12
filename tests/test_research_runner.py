@@ -11,6 +11,7 @@ Acceptance criteria (from ISSUES.md #018):
 5. Unit tests without live SearXNG via monkeypatch.
 6. One integration smoke can stay optional.
 """
+
 from __future__ import annotations
 
 import json
@@ -89,6 +90,7 @@ def _stub_fetch_factory(docs_by_url: dict | None = None):
 
 def _stub_verify_factory(verified_count: int = 2, total_count: int = 5):
     """Returns a stub for `verify_sources` with predictable output."""
+
     def stub(top1, others, query, time_range=None, **_):
         return {
             "verified_facts": verified_count,
@@ -100,6 +102,7 @@ def _stub_verify_factory(verified_count: int = 2, total_count: int = 5):
             "llm_latency": 0.0,
             "llm_error": None,
         }
+
     return stub
 
 
@@ -455,9 +458,7 @@ class TestRunnerSpanCitations:
 
         result = run_research("Falcon 9", approved_plan=True)
         # Without raising, we just want the counts
-        cited, uncited = assert_citations_complete(
-            result.state.claims, raise_on_missing=False
-        )
+        cited, uncited = assert_citations_complete(result.state.claims, raise_on_missing=False)
         stats = citation_stats(result.state.claims)
         # Numbers must agree
         assert cited == stats["cited"]
@@ -470,7 +471,6 @@ class TestRunnerSpanCitations:
         (Phase 4 fields), and the claim augmentation should round-trip
         through `to_dict()` cleanly."""
         from dataclasses import asdict
-
 
         result = run_research("Falcon 9", approved_plan=True)
         # Pick first claim with a window
@@ -504,9 +504,14 @@ class TestRunnerSpanCitations:
         monkeypatch.setattr(
             "research_runner.verify_sources",
             lambda *a, **kw: {
-                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-                "verification_details": [], "llm_enhanced": False,
-                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
             },
         )
         result = run_research("Falcon 9", approved_plan=True)
@@ -519,6 +524,64 @@ class TestRunnerSpanCitations:
         cov = result.synthesis.coverage
         assert isinstance(cov, dict)
         assert "citation_stats" not in cov
+
+    def test_v083c1_inline_span_marker_in_confirmed_bullet(self, patch_network):
+        """v0.8.3-C1: the runner must wire a per-fact span marker into the
+        synthesize() call so confirmed answer bullets expose `[doc_N:start-end]`.
+
+        `patch_network` (the standard offline gate) does not produce any
+        confirmed bullets because its `verify_sources` stub returns
+        `verification_details: []`, so the e2e assertion would be trivially
+        empty. The spec explicitly allows a "focused runner helper test"
+        for this case — we exercise `_build_inline_span_markers` directly
+        to pin the alignment contract, including the duplicate-text
+        fallback and the missing-evidence-window path.
+
+        Coverage of `coverage["inline_citations"]` continuity is already
+        pinned by `test_synthesis_coverage_has_inline_citations` above
+        (it asserts the field is present after `run_research`); we do
+        not duplicate that here.
+        """
+        from evidence import EvidenceWindow
+        from models import Claim
+        from research_runner import _build_inline_span_markers
+
+        # 1) Happy path: one claim with a window, one without.
+        documents = [
+            {"url": "http://a.com/x", "text": "Falcon 9 has 9 engines."},
+            {"url": "http://b.com/y", "text": "First launch 2010."},
+        ]
+        state_claims = [
+            Claim(
+                text="Falcon 9 has 9 engines.",
+                evidence_window=EvidenceWindow(
+                    source_url="http://a.com/x",
+                    source_title="A",
+                    offset_start=0,
+                    offset_end=24,
+                    text="Falcon 9 has 9 engines.",
+                ),
+            ),
+            Claim(text="First launch 2010."),  # no window
+        ]
+        fact_results = [
+            {"fact": "Falcon 9 has 9 engines.", "verdict": "SUPPORTS"},
+            {"fact": "First launch 2010.", "verdict": "INSUFFICIENT"},
+        ]
+        markers = _build_inline_span_markers(fact_results, state_claims, documents)
+        assert markers == ["[doc_0:0-24]", None]
+
+        # 2) Duplicate text: second occurrence falls through to None.
+        dup_results = fact_results + [{"fact": "Falcon 9 has 9 engines.", "verdict": "SUPPORTS"}]
+        dup_markers = _build_inline_span_markers(dup_results, state_claims, documents)
+        assert dup_markers == ["[doc_0:0-24]", None, None]
+
+        # 3) Fact with no matching claim in state → None (no crash).
+        orphan_results = [{"fact": "Unknown fact", "verdict": "SUPPORTS"}]
+        assert _build_inline_span_markers(orphan_results, state_claims, documents) == [None]
+
+        # 4) Empty fact_results → empty list (no crash, no allocation drift).
+        assert _build_inline_span_markers([], state_claims, documents) == []
 
 
 class TestRunResearchError:
@@ -548,8 +611,8 @@ class TestRunResearchError:
         result = run_research("Falcon 9", approved_plan=True)
         assert result.status == "error"
         assert "searxng down" in (result.error or "")
-        assert result.plan is not None       # plan was built before the failure
-        assert result.state is not None      # state was initialised
+        assert result.plan is not None  # plan was built before the failure
+        assert result.state is not None  # state was initialised
 
     def test_synthesize_exception_caught(self, monkeypatch):
         """If `synthesize` raises, runner returns status='error'."""
@@ -564,13 +627,22 @@ class TestRunResearchError:
         )
         monkeypatch.setattr(
             "research_runner.verify_sources",
-            lambda *a, **kw: {"verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-                              "verification_details": [], "llm_enhanced": False,
-                              "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None},
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
         )
+
         # Now break synthesis
         def synth_boom(*a, **kw):
             raise ValueError("synth bad input")
+
         monkeypatch.setattr("research_runner.synthesize", synth_boom)
 
         result = run_research("Falcon 9", approved_plan=True)
@@ -585,9 +657,16 @@ class TestRunResearchNoResults:
         monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u))
         monkeypatch.setattr(
             "research_runner.verify_sources",
-            lambda *a, **kw: {"verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-                              "verification_details": [], "llm_enhanced": False,
-                              "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None},
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
         )
         # approved_plan=True bypasses any routing gate
         result = run_research("Falcon 9 first launch year", approved_plan=True)
@@ -651,6 +730,7 @@ class TestResearchResultSerialisation:
     def test_to_dict_error(self, monkeypatch):
         def boom(_):
             raise RuntimeError("nope")
+
         monkeypatch.setattr("research_runner.build_research_plan", boom)
         result = run_research("anything")
         d = result.to_dict()
@@ -667,12 +747,14 @@ class TestLegacyUntouched:
 
     def test_legacy_deep_research_still_importable(self):
         from hermes_deepresearch import deep_research
+
         assert callable(deep_research)
 
     def test_legacy_deep_research_signature_unchanged(self):
         import inspect
 
         from hermes_deepresearch import deep_research
+
         sig = inspect.signature(deep_research)
         params = list(sig.parameters.keys())
         # Must still accept: query (positional), lang, time_range, top_n, max_chars, alt_queries
@@ -730,12 +812,9 @@ class TestPhaseAFetchDocumentsOrder:
 
         assert len(result) == 2
         assert result[0]["url"].endswith("/slow"), (
-            f"BUG: output[0] is {result[0]['url']!r}, expected /slow. "
-            f"_fetch_documents lost the input order."
+            f"BUG: output[0] is {result[0]['url']!r}, expected /slow. _fetch_documents lost the input order."
         )
-        assert result[1]["url"].endswith("/fast"), (
-            f"BUG: output[1] is {result[1]['url']!r}, expected /fast."
-        )
+        assert result[1]["url"].endswith("/fast"), f"BUG: output[1] is {result[1]['url']!r}, expected /fast."
 
     def test_input_order_preserved_with_three_urls(self, monkeypatch):
         """Three URLs, out-of-order completion — output must be in input order."""
@@ -750,9 +829,7 @@ class TestPhaseAFetchDocumentsOrder:
         monkeypatch.setattr("research_runner.fetch_url", fetch_with_delay)
 
         # Input order: a, c, b — b is slowest but should still be output[2]
-        result = _fetch_documents(
-            ["https://x.com/a", "https://x.com/c", "https://x.com/b"]
-        )
+        result = _fetch_documents(["https://x.com/a", "https://x.com/c", "https://x.com/b"])
         assert [d["url"] for d in result] == [
             "https://x.com/a",
             "https://x.com/c",
@@ -769,9 +846,7 @@ class TestPhaseAFetchDocumentsOrder:
 
         monkeypatch.setattr("research_runner.fetch_url", fetch_with_error)
 
-        result = _fetch_documents(
-            ["https://a.com", "https://bad.com", "https://c.com"]
-        )
+        result = _fetch_documents(["https://a.com", "https://bad.com", "https://c.com"])
         assert [d["url"] for d in result] == [
             "https://a.com",
             "https://bad.com",
@@ -819,8 +894,10 @@ class TestPhaseAFlattenVerificationResults:
 
     def test_flatten_handles_empty_details(self):
         aggregate = {
-            "verified_facts": 0, "total_facts": 0,
-            "verification_rate": 0.0, "verification_details": [],
+            "verified_facts": 0,
+            "total_facts": 0,
+            "verification_rate": 0.0,
+            "verification_details": [],
         }
         assert _flatten_verification_results([aggregate]) == []
 
@@ -879,25 +956,24 @@ class TestPhaseAUseLLMFlag:
         def fake_verify_sources(top1, others, query, **kwargs):
             captured.append(kwargs)
             return {
-                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-                "verification_details": [], "llm_enhanced": False,
-                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
             }
 
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
         monkeypatch.setattr("research_runner.verify_sources", fake_verify_sources)
 
         run_research("Falcon 9", approved_plan=True, use_llm=False)
         assert captured, "verify_sources was not called at all"
-        assert "use_llm" in captured[0], (
-            f"BUG: use_llm not in kwargs passed to verify_sources: {captured[0]}"
-        )
-        assert captured[0]["use_llm"] is False, (
-            f"BUG: use_llm={captured[0]['use_llm']!r}, expected False"
-        )
+        assert "use_llm" in captured[0], f"BUG: use_llm not in kwargs passed to verify_sources: {captured[0]}"
+        assert captured[0]["use_llm"] is False, f"BUG: use_llm={captured[0]['use_llm']!r}, expected False"
 
     def test_run_research_passes_use_llm_true_to_verify_sources(self, monkeypatch):
         """Verify that the True default also propagates (symmetry check)."""
@@ -906,15 +982,18 @@ class TestPhaseAUseLLMFlag:
         def fake_verify_sources(top1, others, query, **kwargs):
             captured.append(kwargs)
             return {
-                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-                "verification_details": [], "llm_enhanced": False,
-                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
             }
 
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
         monkeypatch.setattr("research_runner.verify_sources", fake_verify_sources)
 
         run_research("Falcon 9", approved_plan=True, use_llm=True)
@@ -946,10 +1025,8 @@ class TestPhaseARunnerEndToEnd:
                 "llm_error": None,
             }
 
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
         monkeypatch.setattr("research_runner.verify_sources", fake_verify)
 
         result = run_research("Falcon 9", approved_plan=True)
@@ -979,24 +1056,30 @@ class TestPhaseARunnerEndToEnd:
         def fake_verify(top1, others, query, **kwargs):
             captured_top1.append(top1.get("url", ""))
             return {
-                "verified_facts": 0, "total_facts": 0, "verification_rate": 0.0,
-                "verification_details": [], "llm_enhanced": False,
-                "llm_verified_count": 0, "llm_latency": 0.0, "llm_error": None,
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
             }
 
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [
-                                _make_hit("https://x.com/rank1"),
-                                _make_hit("https://x.com/rank2"),
-                            ])
+        monkeypatch.setattr(
+            "research_runner.web_search",
+            lambda q, **kw: [
+                _make_hit("https://x.com/rank1"),
+                _make_hit("https://x.com/rank2"),
+            ],
+        )
         monkeypatch.setattr("research_runner.fetch_url", slow_first)
         monkeypatch.setattr("research_runner.verify_sources", fake_verify)
 
         run_research("Falcon 9", approved_plan=True)
         assert captured_top1, "verify_sources not called"
         assert "rank1" in captured_top1[0], (
-            f"BUG: top1 = {captured_top1[0]!r}, expected rank1. "
-            f"verify_sources is verifying the wrong source."
+            f"BUG: top1 = {captured_top1[0]!r}, expected rank1. verify_sources is verifying the wrong source."
         )
 
 
@@ -1013,12 +1096,14 @@ class TestPhaseBTaskKey:
 
     def test_same_query_same_route_same_key(self):
         from models import SearchTask
+
         a = SearchTask(query="q", route="general", language="en")
         b = SearchTask(query="q", route="general", language="en")
         assert _task_key(a) == _task_key(b)
 
     def test_different_query_different_key(self):
         from models import SearchTask
+
         a = SearchTask(query="q1", route="general")
         b = SearchTask(query="q2", route="general")
         assert _task_key(a) != _task_key(b)
@@ -1028,6 +1113,7 @@ class TestPhaseBTaskKey:
         against the original. This is intentional — we don't want to
         re-dispatch the same search just because the rationale differs."""
         from models import SearchTask
+
         a = SearchTask(query="q", route="general", priority=100)
         b = SearchTask(query="q", route="general", priority=50)
         assert _task_key(a) == _task_key(b)
@@ -1035,6 +1121,7 @@ class TestPhaseBTaskKey:
     def test_engines_field_affects_key(self):
         """Different engine filters → different tasks (different intents)."""
         from models import SearchTask
+
         a = SearchTask(query="q", engines="wikipedia")
         b = SearchTask(query="q", engines="arxiv")
         assert _task_key(a) != _task_key(b)
@@ -1059,17 +1146,21 @@ class TestPhaseBPlanNotMutated:
 
         # Force a gap-analysis iteration by making the gap check return gaps
         # (use a real fixture so other monkeypatches still work)
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
-        monkeypatch.setattr("research_runner.verify_sources",
-                            lambda *a, **kw: {
-                                "verified_facts": 0, "total_facts": 0,
-                                "verification_rate": 0.0, "verification_details": [],
-                                "llm_enhanced": False, "llm_verified_count": 0,
-                                "llm_latency": 0.0, "llm_error": None,
-                            })
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
+        )
 
         # Run with max_iterations=2 to give gap analysis a chance to fire
         run_research("Falcon 9", approved_plan=True, max_iterations=2)
@@ -1081,24 +1172,26 @@ class TestPhaseBPlanNotMutated:
         )
         # And the tasks themselves are the same objects (no rebinding)
         for i, t in enumerate(plan.search_tasks):
-            assert t is tasks_before[i], (
-                f"BUG: plan.search_tasks[{i}] was replaced (mutation)"
-            )
+            assert t is tasks_before[i], f"BUG: plan.search_tasks[{i}] was replaced (mutation)"
 
     def test_result_plan_equals_input_plan(self, monkeypatch):
         """The plan in the result should be the SAME object as the input
         plan, not a modified copy."""
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
-        monkeypatch.setattr("research_runner.verify_sources",
-                            lambda *a, **kw: {
-                                "verified_facts": 0, "total_facts": 0,
-                                "verification_rate": 0.0, "verification_details": [],
-                                "llm_enhanced": False, "llm_verified_count": 0,
-                                "llm_latency": 0.0, "llm_error": None,
-                            })
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
+        )
 
         result = run_research("Falcon 9", approved_plan=True)
         # The result.plan.search_tasks is the same frozen plan object
@@ -1130,33 +1223,42 @@ class TestPhaseBDeepeningDedup:
         # Wrap _dispatch_search_task so we record the task_key of every
         # task that the runner actually sent to the search backend.
         real_dispatch = _dispatch_search_task
+
         def hooked_dispatch(task, **kw):
             dispatched_keys.append(runner_task_key(task))
             return real_dispatch(task, **kw)
 
         monkeypatch.setattr("research_runner._dispatch_search_task", hooked_dispatch)
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
-        monkeypatch.setattr("research_runner.verify_sources",
-                            lambda *a, **kw: {
-                                "verified_facts": 0, "total_facts": 0,
-                                "verification_rate": 0.0, "verification_details": [],
-                                "llm_enhanced": False, "llm_verified_count": 0,
-                                "llm_latency": 0.0, "llm_error": None,
-                            })
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
+        )
 
         # Patch analyze_gaps to return a gap on iter 0 (triggers gap-fill
         # tasks), no gaps on iter 1 (clean run).
         gap_call_count = [0]
         from gap_analysis import ResearchGap
+
         def fake_analyze_gaps(state):
             gap_call_count[0] += 1
             if gap_call_count[0] == 1:
-                return [ResearchGap(
-                    kind="too_few_sources", detail="need more",
-                )]
+                return [
+                    ResearchGap(
+                        kind="too_few_sources",
+                        detail="need more",
+                    )
+                ]
             return []
 
         monkeypatch.setattr("research_runner.analyze_gaps", fake_analyze_gaps)
@@ -1187,16 +1289,21 @@ class TestPhaseBDeepeningDedup:
             fetched_urls.append(url)
             return _make_doc(url, text="body")
 
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://x.com/once")])
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://x.com/once")])
         monkeypatch.setattr("research_runner.fetch_url", fake_fetch)
-        monkeypatch.setattr("research_runner.verify_sources",
-                            lambda *a, **kw: {
-                                "verified_facts": 0, "total_facts": 0,
-                                "verification_rate": 0.0, "verification_details": [],
-                                "llm_enhanced": False, "llm_verified_count": 0,
-                                "llm_latency": 0.0, "llm_error": None,
-                            })
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
+        )
 
         # max_iterations=2 with no gaps: iteration 0 fetches,
         # iteration 1 should NOT re-fetch the same URL.
@@ -1212,17 +1319,21 @@ class TestPhaseBDeepeningDedup:
     def test_iteration_count_audit_trail(self, monkeypatch):
         """synth.coverage should report iterations_executed so the audit
         trail is unambiguous."""
-        monkeypatch.setattr("research_runner.web_search",
-                            lambda q, **kw: [_make_hit("https://a.com")])
-        monkeypatch.setattr("research_runner.fetch_url",
-                            lambda u, **kw: _make_doc(u, text="body"))
-        monkeypatch.setattr("research_runner.verify_sources",
-                            lambda *a, **kw: {
-                                "verified_facts": 0, "total_facts": 0,
-                                "verification_rate": 0.0, "verification_details": [],
-                                "llm_enhanced": False, "llm_verified_count": 0,
-                                "llm_latency": 0.0, "llm_error": None,
-                            })
+        monkeypatch.setattr("research_runner.web_search", lambda q, **kw: [_make_hit("https://a.com")])
+        monkeypatch.setattr("research_runner.fetch_url", lambda u, **kw: _make_doc(u, text="body"))
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
+        )
 
         result = run_research("Falcon 9", approved_plan=True, max_iterations=2)
         cov = result.synthesis.coverage

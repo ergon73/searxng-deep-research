@@ -286,6 +286,49 @@ def _doc_index_for_window(window: EvidenceWindow, documents: list[dict]) -> int:
     return 0
 
 
+def _build_inline_span_markers(
+    fact_results: list[dict],
+    state_claims: list[Claim],
+    documents: list[dict],
+) -> list[str | None]:
+    """v0.8.3-C1: align span markers to `fact_results` for the synthesizer.
+
+    For each fact_result, find the first unused `Claim` in `state_claims`
+    whose `.text` matches the fact's "fact" field exactly. If a match
+    exists and the Claim has a non-None `evidence_window`, emit the
+    marker string `f"[doc_{i}:{start}-{end}]"` where `i` is the
+    document index resolved by `_doc_index_for_window`. Otherwise emit
+    None.
+
+    Defensive: duplicate claim texts are tolerated (first unused match
+    wins; subsequent duplicates fall through to None). Missing claims or
+    a missing evidence_window both yield None. The list length always
+    matches `fact_results` — synthesize() then validates each entry.
+    """
+    out: list[str | None] = [None] * len(fact_results)
+    used: set[int] = set()
+    for i, r in enumerate(fact_results):
+        if not isinstance(r, dict):
+            continue
+        fact_text = r.get("fact", "")
+        if not fact_text:
+            continue
+        for j, c in enumerate(state_claims):
+            if j in used:
+                continue
+            if c.text != fact_text:
+                continue
+            used.add(j)
+            window = c.evidence_window
+            if window is None:
+                out[i] = None
+            else:
+                doc_index = _doc_index_for_window(window, documents)
+                out[i] = f"[doc_{doc_index}:{window.offset_start}-{window.offset_end}]"
+            break
+    return out
+
+
 def _flatten_verification_results(verdicts: list[dict] | list[Any]) -> list[dict]:
     """Flatten aggregate verification dicts into per-fact result dicts.
 
@@ -553,11 +596,22 @@ def run_research(
         # that don't go through verification).
         synth_claims = [r.get("fact", "") for r in fact_results] if fact_results else flat_claims
 
+        # v0.8.3-C1: build per-fact span markers aligned to `fact_results`.
+        # We match by exact fact text against `state.claims` (defensive
+        # against duplicates: first unused match wins). For each fact
+        # with a matching Claim and a non-None evidence_window, emit a
+        # marker string of the form `[doc_<i>:<start>-<end>]`. No match
+        # → None. This list is what synthesize() will validate by index
+        # and append to confirmed bullets. `coverage["inline_citations"]`
+        # is left untouched for downstream consumers.
+        span_markers = _build_inline_span_markers(fact_results, state.claims, documents)
+
         synth = synthesize(
             query=query,
             claims=synth_claims,
             results=fact_results,
             source_candidates=documents,
+            inline_span_markers=span_markers,
         )
 
         # Phase 4 (#019) — span-level citation stats. Decorate the synthesis

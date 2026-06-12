@@ -661,6 +661,7 @@ def _render_user_markdown(
     citations: list[Citation],
     coverage: dict,
     contradictions: list[dict],
+    inline_span_markers: list[str | None] | None = None,
 ) -> str:
     """v0.8.3-B / B1: user-facing answer with 6 always-rendered sections.
 
@@ -683,6 +684,11 @@ def _render_user_markdown(
       - WEAK_SUPPORT                          → "Слабые или неподтверждённые сигналы"
       - REFUTES, CONFLICTING, NUMERIC_MISMATCH → "Противоречия / расхождения"
       - INSUFFICIENT, None                    → "Что не удалось проверить"
+
+    v0.8.3-C1: `inline_span_markers[i]` (when present, non-None and
+    matching `[doc_<int>:<int>-<int>]`) is appended to the confirmed
+    bullet for `results[i]` ONLY — weak / contradiction / unverifiable
+    bullets are unaffected. Misaligned list length is tolerated (defensive).
     """
     url_to_id = _build_url_to_id(citations)
 
@@ -705,7 +711,18 @@ def _render_user_markdown(
         if route == "confirmed":
             supporting = _collect_supporting_urls(r)
             markers = _format_citation_markers(supporting, url_to_id)
-            confirmed.append(f"- {claim_esc} {markers}".rstrip())
+            bullet = f"- {claim_esc} {markers}".rstrip()
+            # v0.8.3-C1: append span marker (e.g. [doc_0:120-187]) ONLY for
+            # confirmed bullets. The marker is validated by index — invalid
+            # strings or out-of-range i are silently dropped so this remains
+            # byte-identical to v0.8.3-B1 when inline_span_markers is None
+            # or short.
+            if inline_span_markers is not None and markers:
+                if i < len(inline_span_markers):
+                    raw = inline_span_markers[i]
+                    if isinstance(raw, str) and _SPAN_MARKER_RE.fullmatch(raw):
+                        bullet = f"{bullet} {raw}"
+            confirmed.append(bullet)
         elif route == "weak":
             # Phrase explicitly: not confirmed (AC #7)
             if verdict == VERDICT_WEAK_SUPPORT:
@@ -784,6 +801,7 @@ def synthesize(
     claims: list[str],
     results: list[dict],
     source_candidates: list[dict],
+    inline_span_markers: list[str | None] | None = None,
 ) -> Synthesis:
     """Deterministic synthesis builder.
 
@@ -793,11 +811,19 @@ def synthesize(
       - answer_markdown: user-facing 6-section answer (new)
       - audit_markdown:  old per-claim breakdown (preserved for review)
 
+    v0.8.3-C1: when `inline_span_markers[i]` is a valid string matching
+    `[doc_<int>:<int>-<int>]`, it is appended to the i-th confirmed
+    bullet in `answer_markdown`. Defaults to None (legacy / v0.8.3-B1
+    behaviour, byte-identical output).
+
     Args:
         query: original user query
         claims: list of fact strings (used as fallback when result missing)
         results: list of VerificationResult dicts
         source_candidates: list of {"url", "text", "title"?} dicts
+        inline_span_markers: optional list aligned to `results`; each
+            entry is either a span marker string or None. Invalid strings
+            are ignored. List length mismatch with `results` is tolerated.
 
     Returns:
         Synthesis with deterministic markdown, citations, coverage, etc.
@@ -828,6 +854,7 @@ def synthesize(
         citations=citations,
         coverage=coverage,
         contradictions=contradictions,
+        inline_span_markers=inline_span_markers,
     )
     audit_markdown = _render_audit_markdown(
         query=query or "",
@@ -856,6 +883,11 @@ def synthesize(
 
 # Regex для поиска [N] в LLM-enriched markdown
 _CITATION_MARKER_RE = re.compile(r"\[(\d{1,3})\]")
+# v0.8.3-C1: span-level marker pattern `[doc_<int>:<int>-<int>]`. Used to
+# validate `inline_span_markers` payload before it gets attached to confirmed
+# answer bullets. Mirrors the regex in `citations._CITATION_RE` without
+# importing that module (citations must remain untouched for this batch).
+_SPAN_MARKER_RE = re.compile(r"\[doc_(\d+):(\d+)-(\d+)\]")
 # Regex для поиска URL в LLM-enriched markdown (чтобы поймать выдуманные)
 _URL_RE = re.compile(r"https?://[^\s\)\]\"'<>]+")
 

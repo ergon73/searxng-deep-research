@@ -584,6 +584,116 @@ class TestRunnerSpanCitations:
         assert _build_inline_span_markers([], state_claims, documents) == []
 
 
+class TestRunnerSpanMarkersStrictDocIndex:
+    """v0.8.3-C1b: strict doc-index resolution for inline span markers.
+
+    When `EvidenceWindow.source_url` is empty or does not match any
+    document URL, `_build_inline_span_markers` must emit `None` rather
+    than fall back to `[doc_0:start-end]`. A `[doc_0:...]` marker would
+    be misleading because the user-facing citation table in
+    `answer_markdown` uses 1-based ids, so a 0 there would point at a
+    different document than the user expects from the `[N]` marker next
+    to it. The legacy `coverage["inline_citations"]` debug field
+    (built by `format_cited_claim` in the runner) is NOT affected; it
+    keeps its `or 0` fallback so downstream consumers see no change.
+    """
+
+    def test_inline_span_marker_not_emitted_when_window_source_url_missing(
+        self, patch_network
+    ):
+        """EvidenceWindow with empty `source_url` → marker is None."""
+        from evidence import EvidenceWindow
+        from models import Claim
+        from research_runner import _build_inline_span_markers
+
+        documents = [
+            {"url": "http://a.com/x", "text": "Falcon 9 has 9 engines."},
+        ]
+        state_claims = [
+            Claim(
+                text="Falcon 9 has 9 engines.",
+                evidence_window=EvidenceWindow(
+                    source_url="",  # v0.8.3-C1b trigger: no source attribution
+                    source_title="A",
+                    offset_start=0,
+                    offset_end=24,
+                    text="Falcon 9 has 9 engines.",
+                ),
+            ),
+        ]
+        fact_results = [{"fact": "Falcon 9 has 9 engines.", "verdict": "SUPPORTS"}]
+        markers = _build_inline_span_markers(fact_results, state_claims, documents)
+        assert markers == [None], (
+            "empty source_url must yield None, not [doc_0:start-end]"
+        )
+
+    def test_inline_span_marker_not_emitted_when_window_source_url_not_in_documents(
+        self, patch_network
+    ):
+        """EvidenceWindow whose `source_url` does not match any
+        document → marker is None (no fallback to 0)."""
+        from evidence import EvidenceWindow
+        from models import Claim
+        from research_runner import _build_inline_span_markers
+
+        documents = [
+            {"url": "http://a.com/x", "text": "Falcon 9 has 9 engines."},
+            {"url": "http://b.com/y", "text": "First launch 2010."},
+        ]
+        state_claims = [
+            Claim(
+                text="Falcon 9 has 9 engines.",
+                evidence_window=EvidenceWindow(
+                    # v0.8.3-C1b trigger: no document in `documents` has
+                    # this URL; the window was produced from a fallback
+                    # slice or a doc that got dropped from `documents`.
+                    source_url="http://orphan.com/z",
+                    source_title="Orphan",
+                    offset_start=10,
+                    offset_end=30,
+                    text="Falcon 9 has 9 engines.",
+                ),
+            ),
+        ]
+        fact_results = [{"fact": "Falcon 9 has 9 engines.", "verdict": "SUPPORTS"}]
+        markers = _build_inline_span_markers(fact_results, state_claims, documents)
+        assert markers == [None], (
+            "unmatched source_url must yield None, not [doc_0:start-end]"
+        )
+
+    def test_inline_span_marker_uses_matching_document_index_not_default_zero(
+        self, patch_network
+    ):
+        """Existing valid behaviour: source_url matching `documents[1]`
+        produces `[doc_1:start-end]`, not `[doc_0:start-end]`."""
+        from evidence import EvidenceWindow
+        from models import Claim
+        from research_runner import _build_inline_span_markers
+
+        documents = [
+            {"url": "http://a.com/x", "text": "First launch 2010."},
+            {"url": "http://b.com/y", "text": "Falcon 9 has 9 engines."},
+            {"url": "http://c.com/z", "text": "Reusable first stage."},
+        ]
+        state_claims = [
+            Claim(
+                text="Falcon 9 has 9 engines.",
+                evidence_window=EvidenceWindow(
+                    source_url="http://b.com/y",  # matches documents[1]
+                    source_title="B",
+                    offset_start=5,
+                    offset_end=29,
+                    text="Falcon 9 has 9 engines.",
+                ),
+            ),
+        ]
+        fact_results = [{"fact": "Falcon 9 has 9 engines.", "verdict": "SUPPORTS"}]
+        markers = _build_inline_span_markers(fact_results, state_claims, documents)
+        assert markers == ["[doc_1:5-29]"], (
+            f"expected matching doc index 1, got {markers!r}"
+        )
+
+
 class TestRunResearchError:
     def test_planner_exception_caught(self, monkeypatch):
         """If `build_research_plan` raises, runner returns status='error'."""

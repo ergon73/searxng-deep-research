@@ -267,23 +267,30 @@ def _extract_typed_claims_with_citations(
     return augmented
 
 
-def _doc_index_for_window(window: EvidenceWindow, documents: list[dict]) -> int:
+def _doc_index_for_window(window: EvidenceWindow, documents: list[dict]) -> int | None:
     """Find the index of the document whose URL matches `window.source_url`.
 
     Used by `format_cited_claim` to produce `[doc_N:...]` markers that
     downstream LLM prompts can use as concrete pointers ("go to doc N,
     char 120-187").
 
-    Returns 0 by default if no match is found (this can happen when the
-    window was produced from a fallback slice — we still emit a marker,
-    just a conservative one).
+    v0.8.3-C1b: returns None when the document index cannot be resolved
+    (empty `source_url` or no match in `documents`). Callers that produce
+    *user-facing* span markers (`_build_inline_span_markers`) must treat
+    None as "no marker" — emitting `[doc_0:start-end]` would be
+    misleading because the citation table id `[N]` in `answer_markdown`
+    uses 1-based offsets, so a doc index of 0 there refers to a
+    *different* document than `documents[0]`. Callers that produce the
+    legacy `coverage["inline_citations"]` debug field (via
+    `format_cited_claim`) keep their previous "default 0" semantics
+    by passing `doc_index or 0` at the call site.
     """
     if not window.source_url:
-        return 0
+        return None
     for i, doc in enumerate(documents):
         if doc.get("url") == window.source_url:
             return i
-    return 0
+    return None
 
 
 def _build_inline_span_markers(
@@ -293,12 +300,19 @@ def _build_inline_span_markers(
 ) -> list[str | None]:
     """v0.8.3-C1: align span markers to `fact_results` for the synthesizer.
 
-    For each fact_result, find the first unused `Claim` in `state_claims`
+    For each fact_result, find the first unused `Claim` in `state.claims`
     whose `.text` matches the fact's "fact" field exactly. If a match
     exists and the Claim has a non-None `evidence_window`, emit the
     marker string `f"[doc_{i}:{start}-{end}]"` where `i` is the
     document index resolved by `_doc_index_for_window`. Otherwise emit
     None.
+
+    v0.8.3-C1b: when `_doc_index_for_window` returns None (empty
+    `source_url` or no match in `documents`), emit None here as well —
+    never fall back to `[doc_0:start-end]`, because the user-facing
+    citation table in `answer_markdown` uses 1-based ids, so a marker
+    of `[doc_0:...]` would point at a different document than the
+    user expects from the `[N]` marker next to it.
 
     Defensive: duplicate claim texts are tolerated (first unused match
     wins; subsequent duplicates fall through to None). Missing claims or
@@ -323,8 +337,15 @@ def _build_inline_span_markers(
             if window is None:
                 out[i] = None
             else:
+                # v0.8.3-C1b: strict doc-index resolution. None means
+                # "we cannot attribute this claim to any document" —
+                # emit no span marker rather than a misleading
+                # `[doc_0:start-end]`.
                 doc_index = _doc_index_for_window(window, documents)
-                out[i] = f"[doc_{doc_index}:{window.offset_start}-{window.offset_end}]"
+                if doc_index is None:
+                    out[i] = None
+                else:
+                    out[i] = f"[doc_{doc_index}:{window.offset_start}-{window.offset_end}]"
             break
     return out
 
@@ -651,7 +672,12 @@ def run_research(
                 format_cited_claim(
                     c,
                     c.evidence_window,
-                    doc_index=_doc_index_for_window(c.evidence_window, documents),
+                    # v0.8.3-C1b: coverage["inline_citations"] is a debug
+                    # field; preserve the legacy "default 0" semantics so
+                    # downstream consumers see no change. User-facing
+                    # span markers in answer_markdown (handled by
+                    # _build_inline_span_markers) do NOT use this fallback.
+                    doc_index=_doc_index_for_window(c.evidence_window, documents) or 0,
                 )
                 for c in state.claims
                 if c.evidence_window is not None

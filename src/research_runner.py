@@ -270,20 +270,21 @@ def _extract_typed_claims_with_citations(
 def _doc_index_for_window(window: EvidenceWindow, documents: list[dict]) -> int | None:
     """Find the index of the document whose URL matches `window.source_url`.
 
-    Used by `format_cited_claim` to produce `[doc_N:...]` markers that
-    downstream LLM prompts can use as concrete pointers ("go to doc N,
-    char 120-187").
+    Used to produce `[doc_N:start-end]` markers that downstream LLM
+    prompts can use as concrete pointers ("go to doc N, char 120-187").
 
-    v0.8.3-C1b: returns None when the document index cannot be resolved
-    (empty `source_url` or no match in `documents`). Callers that produce
-    *user-facing* span markers (`_build_inline_span_markers`) must treat
-    None as "no marker" — emitting `[doc_0:start-end]` would be
-    misleading because the citation table id `[N]` in `answer_markdown`
-    uses 1-based offsets, so a doc index of 0 there refers to a
-    *different* document than `documents[0]`. Callers that produce the
-    legacy `coverage["inline_citations"]` debug field (via
-    `format_cited_claim`) keep their previous "default 0" semantics
-    by passing `doc_index or 0` at the call site.
+    Returns `None` when the document index cannot be resolved — either
+    `window.source_url` is empty, or no document in `documents` has
+    that URL. All callers must treat `None` as "no span marker / no
+    inline citation" and skip the entry; they must never fall back to
+    `[doc_0:start-end]`. A fabricated `[doc_0:...]` would be misleading
+    because the citation table id `[N]` in `answer_markdown` uses
+    1-based offsets, so a doc index of 0 there refers to a *different*
+    document than `documents[0]`.
+
+    A valid resolved index of 0 is a real, expected value (a
+    `source_url` that matches `documents[0]`) and must not be confused
+    with the unresolved `None` case.
     """
     if not window.source_url:
         return None

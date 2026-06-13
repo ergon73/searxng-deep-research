@@ -990,6 +990,117 @@ def _is_negated(fact: str, text: str) -> bool:
     return False
 
 
+# v0.8.3-C2-data: span-localising helpers.
+#
+# `_is_negated` returns a bool — enough for verdict routing but it discards
+# the offset of the negation match. For the future refuting-span markers we
+# need the actual (start, end, method) triple pointing at the negation phrase
+# in the source text, so it can be surfaced as `[refute_doc_N:start-end]`.
+#
+# These helpers never invent offsets: if the regex cannot localise the
+# refuting / mismatching phrase in `text`, they return None and the caller
+# MUST keep only the URL-level provenance (the legacy `refuting_sources` /
+# `numeric_mismatch_sources` fields).
+def _find_negation_span(fact: str, text: str) -> tuple[int, int, str] | None:
+    """Locate the negation match for `fact` inside `text`.
+
+    Returns (offset_start, offset_end, method) where the offsets are into
+    the original `text` (not lower-cased) and cover the matched phrase
+    ("не <...> <fact>" or similar). `method` is one of
+    "negation_after" / "negation_before" / "negation_en". Returns None
+    if no negation pattern is found.
+
+    Defensive: returns None for empty inputs, mismatched encodings, or
+    any regex error — the caller must treat None as "no span available"
+    and keep only the URL-level refuting_sources entry.
+    """
+    if not text or not fact:
+        return None
+    try:
+        text_l = text.lower()
+        fact_l = fact.lower()
+        fact_esc = re.escape(fact_l)
+
+        # Same 3 patterns as `_is_negated` (line 962-988), but each
+        # captures the matched span via `re.search(...).span()` instead
+        # of discarding it.
+        after_re = re.compile(
+            r"(?:^|[^а-яёa-z0-9])(не|нет|без|не\s+был[аи]?|ни|н[еи]\s+одного|ни\s+одного|ни\s+одной)\s+(?:\w+\s+){0,4}"
+            + fact_esc
+            + r"(?:\b|[^а-яёa-z0-9])",
+            re.IGNORECASE,
+        )
+        m = after_re.search(text_l)
+        if m is not None:
+            return (m.start(), m.end(), "negation_after")
+
+        before_re = re.compile(
+            fact_esc
+            + r"\w*\s+(?:\w+\s+){0,3}(не|нет|не\s+был[аи]?|ни\s+сбит|не\s+сбит|не\s+обнаружен|ни\s+одного)",
+            re.IGNORECASE,
+        )
+        m = before_re.search(text_l)
+        if m is not None:
+            return (m.start(), m.end(), "negation_before")
+
+        no_re = re.compile(
+            r"(?:^|[^а-яёa-z0-9])(no|not)\s+(?:\w+\s+){0,3}" + fact_esc + r"\w*(?:\b|[^а-яёa-z0-9])",
+            re.IGNORECASE,
+        )
+        m = no_re.search(text_l)
+        if m is not None:
+            return (m.start(), m.end(), "negation_en")
+
+        return None
+    except re.error:
+        return None
+
+
+def _find_num_mismatch_span(fact: str, text: str) -> tuple[int, int, str] | None:
+    """Locate the first numeric mismatch between `fact` and `text`.
+
+    Scans every `NUM_UNIT_RE` occurrence in `text` and returns the span
+    of the FIRST occurrence whose stem matches (or is a synonym of) the
+    fact's stem but whose number disagrees. Returns None if no such
+    occurrence exists, or if the fact has no normalised numeric unit
+    (handled by `_normalize_num_unit`).
+
+    This is the same first-mismatch position that `_match_numeric_unit`
+    uses internally; we only extract the offset for the *first* mismatch
+    seen, which is enough to surface a span marker pointing at the
+    specific number that conflicts with the claim.
+
+    Defensive: returns None on any unexpected error — the caller MUST
+    keep only the URL-level `numeric_mismatch_sources` entry.
+    """
+    if not text or not fact:
+        return None
+    try:
+        norm = _normalize_num_unit(fact)
+        if not norm:
+            return None
+        _fact_num, fact_stem = norm
+        text_lower = text.lower()
+        f_syns = SYNONYM_DICT.get(fact_stem, set())
+
+        for m in NUM_UNIT_RE.finditer(text_lower):
+            t_num = m.group(1)
+            t_stem = _morph_stem(m.group(2))
+            t_syns = SYNONYM_DICT.get(t_stem, set())
+            same_stem = t_stem == fact_stem
+            synonym_stem = t_stem in f_syns or fact_stem in t_syns or bool(t_syns & f_syns)
+            if not (same_stem or synonym_stem):
+                continue
+            if t_num == _fact_num:
+                # Same number — not a mismatch, keep scanning.
+                continue
+            # First stem-matching, number-mismatching occurrence → emit.
+            return (m.start(), m.end(), "num_mismatch")
+        return None
+    except (re.error, AttributeError, TypeError):
+        return None
+
+
 # v0.8.2-B1 (reviewer-9): whitelist helper.
 # Принимает только URL, которые canonicalize к одному из source_candidates.
 # v0.8.2-B2 (reviewer-9): возвращает ОРИГИНАЛЬНЫЕ URL кандидатов (НЕ LLM raw).
@@ -1126,13 +1237,38 @@ def verify_sources(
     verified_count = 0
 
     for fact in facts:
-        # Negation detection (на top-1 + other_sources)
-        negated_in_top1 = _is_negated(fact, top1_text)
+        # Negation detection (на top-1 + other_sources).
+        # v0.8.3-C2-data: also capture the negation span in top-1 so we
+        # can later render refuting markers. If the top-1 text does not
+        # localise the negation, the helper returns None and we keep only
+        # the negated=True bool (legacy behaviour).
+        top1_neg_span = _find_negation_span(fact, top1_text)
+        negated_in_top1 = top1_neg_span is not None
         refuting_sources = []  # sources where fact appears with negation
+        # v0.8.3-C2-data: span-level refuting evidence. Parallel to
+        # `refuting_sources` (URL-level), but carries offset+quote for
+        # future refuting-span markers in answer_markdown. Empty when
+        # no span can be localised — we never invent offsets.
+        refuting_evidence_windows: list[dict] = []
+        if top1_neg_span is not None:
+            off_s, off_e, method = top1_neg_span
+            refuting_evidence_windows.append(
+                {
+                    "source_url": top1.get("url", ""),
+                    "quote": top1_text[off_s:off_e],
+                    "offset_start": off_s,
+                    "offset_end": off_e,
+                    "method": method,
+                }
+            )
 
         # Match against each other source
         supporting_sources = []
         numeric_mismatch_sources = []  # skill 6.5: P0 numeric mismatch
+        # v0.8.3-C2-data: span-level numeric-mismatch evidence. Same
+        # contract as `refuting_evidence_windows`: parallel to the URL
+        # list, populated only when a span can be localised honestly.
+        numeric_mismatch_evidence_windows: list[dict] = []
         for src in other_sources:
             if src.get("error") or not src.get("text"):
                 continue
@@ -1141,12 +1277,42 @@ def verify_sources(
                 # Проверить refutation: fact в text с отрицанием?
                 if _is_negated(fact, src["text"]):
                     refuting_sources.append(src.get("url", "?"))
+                    # v0.8.3-C2-data: try to localise the negation span
+                    # in this source. If found, append a window; if not,
+                    # the URL-only entry is still kept (no fabrication).
+                    neg_span = _find_negation_span(fact, src["text"])
+                    if neg_span is not None:
+                        off_s, off_e, neg_method = neg_span
+                        refuting_evidence_windows.append(
+                            {
+                                "source_url": src.get("url", "?"),
+                                "quote": src["text"][off_s:off_e],
+                                "offset_start": off_s,
+                                "offset_end": off_e,
+                                "method": neg_method,
+                            }
+                        )
                 elif method == "num_mismatch":
                     # Same stem, different number → count conflict.
                     # Do NOT count as support. Surface separately so the
                     # user / synthesis stage can see the contradiction.
                     # See audit 2026-06-07, section 5, P0.
                     numeric_mismatch_sources.append((src.get("url", "?"), score, method))
+                    # v0.8.3-C2-data: try to localise the mismatching
+                    # number/unit. Emit a window only if the helper can
+                    # honestly point at the mismatching span.
+                    num_span = _find_num_mismatch_span(fact, src["text"])
+                    if num_span is not None:
+                        off_s, off_e, num_method = num_span
+                        numeric_mismatch_evidence_windows.append(
+                            {
+                                "source_url": src.get("url", "?"),
+                                "quote": src["text"][off_s:off_e],
+                                "offset_start": off_s,
+                                "offset_end": off_e,
+                                "method": num_method,
+                            }
+                        )
                 else:
                     supporting_sources.append((src.get("url", "?"), score, method))
 
@@ -1188,6 +1354,14 @@ def verify_sources(
                 "supporting_sources": supporting_sources,
                 "refuting_sources": refuting_sources,
                 "numeric_mismatch_sources": numeric_mismatch_sources,
+                # v0.8.3-C2-data: span-level evidence for refuting and
+                # numeric-mismatch sources. Always present (even when
+                # empty) for downstream consumers — backward-compat is
+                # preserved because `supporting_evidence_windows` is
+                # also included (empty in this batch; out of scope).
+                "supporting_evidence_windows": [],
+                "refuting_evidence_windows": refuting_evidence_windows,
+                "numeric_mismatch_evidence_windows": numeric_mismatch_evidence_windows,
                 "method": supporting_sources[0][2] if supporting_sources else None,
             }
         )

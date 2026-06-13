@@ -668,20 +668,27 @@ def run_research(
             # Also list inline-formatted cited claims (for debugging /
             # downstream prompt assembly). These look like:
             #   "5 июня 2026 [doc_0:8-19]"
-            inline = [
-                format_cited_claim(
-                    c,
-                    c.evidence_window,
-                    # v0.8.3-C1b: coverage["inline_citations"] is a debug
-                    # field; preserve the legacy "default 0" semantics so
-                    # downstream consumers see no change. User-facing
-                    # span markers in answer_markdown (handled by
-                    # _build_inline_span_markers) do NOT use this fallback.
-                    doc_index=_doc_index_for_window(c.evidence_window, documents) or 0,
-                )
-                for c in state.claims
-                if c.evidence_window is not None
-            ]
+            #
+            # v0.8.3-C1c: coverage["inline_citations"] is provenance data,
+            # not just a debug field. When the document index cannot be
+            # resolved (empty `source_url` or no match in `documents`),
+            # skip the entry entirely — never fabricate
+            # [doc_0:start-end] as a fallback. This mirrors the strict
+            # user-facing span-marker behavior in
+            # `_build_inline_span_markers` (C1b); a fabricated [doc_0]
+            # would be misleading because the citation table id `[N]` in
+            # `answer_markdown` uses 1-based offsets, so a doc index of 0
+            # there would point at a *different* document than
+            # `documents[0]`. The previous C1b `or 0` fallback is
+            # intentionally removed here.
+            inline: list[str] = []
+            for c in state.claims:
+                if c.evidence_window is None:
+                    continue
+                doc_index = _doc_index_for_window(c.evidence_window, documents)
+                if doc_index is None:
+                    continue
+                inline.append(format_cited_claim(c, c.evidence_window, doc_index=doc_index))
             synth.coverage["inline_citations"] = inline
             synth.coverage["unverified_claims"] = [c.text for c in state.claims if c.evidence_window is None]
 

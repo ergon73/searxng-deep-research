@@ -694,6 +694,189 @@ class TestRunnerSpanMarkersStrictDocIndex:
         )
 
 
+class TestRunnerCoverageInlineCitationsNoFabrication:
+    """v0.8.3-C1c: no fabricated doc_0 in `coverage["inline_citations"]`.
+
+    `_doc_index_for_window` was changed in C1b to return `None` for
+    empty `source_url` or unmatched URLs. C1b kept a `or 0` fallback
+    in the runner's `coverage["inline_citations"]` build to preserve
+    the v0.8.1 contract for downstream consumers. C1c removes that
+    fallback: the field is provenance data, and a fabricated
+    `[doc_0:start-end]` would be misleading because the citation
+    table id `[N]` in `answer_markdown` uses 1-based offsets, so a
+    doc index of 0 there would point at a *different* document than
+    `documents[0]`. The user-facing span-marker behavior in
+    `answer_markdown` (via `_build_inline_span_markers`) is unaffected
+    — that path was already strict in C1b.
+
+    These tests exercise the runner's `coverage["inline_citations"]`
+    build path end-to-end by running `run_research` with a controlled
+    `state.claims` (via monkeypatch on
+    `_extract_typed_claims_with_citations`) and observing what the
+    runner writes into `synth.coverage["inline_citations"]`. The
+    test for the *valid* index 0 case (AC #2) makes sure we don't
+    confuse the resolved-index-0 path with the unresolved-None
+    path.
+    """
+
+    def _run_with_state_claims(self, monkeypatch, state_claims, documents):
+        """Run `run_research` with a controlled `state.claims` + documents.
+
+        Patches `_extract_typed_claims_with_citations` to return
+        `state_claims` verbatim, and stubs `web_search`/`fetch_url` to
+        mirror the `documents` fixture so the runner's own internal
+        `documents` list matches the URLs referenced in
+        `EvidenceWindow.source_url`. The network stubs also keep the
+        runner offline and deterministic. Returns the synthesis
+        coverage dict for assertions.
+        """
+        from research_runner import run_research
+
+        docs_by_url = {d["url"]: d for d in documents}
+
+        monkeypatch.setattr(
+            "research_runner._extract_typed_claims_with_citations",
+            lambda docs, q: list(state_claims),
+        )
+        monkeypatch.setattr(
+            "research_runner.web_search",
+            # Return one hit per fixture doc so the runner collects
+            # exactly the URLs we want in its `documents` list.
+            lambda q, **kw: [_make_hit(u) for u in docs_by_url]
+            or [_make_hit("https://example.com/?q=test")],
+        )
+        monkeypatch.setattr(
+            "research_runner.fetch_url",
+            lambda u, **kw: docs_by_url.get(u, _make_doc(u, text="stub text")),
+        )
+        monkeypatch.setattr(
+            "research_runner.verify_sources",
+            lambda *a, **kw: {
+                "verified_facts": 0,
+                "total_facts": 0,
+                "verification_rate": 0.0,
+                "verification_details": [],
+                "llm_enhanced": False,
+                "llm_verified_count": 0,
+                "llm_latency": 0.0,
+                "llm_error": None,
+            },
+        )
+        result = run_research("Falcon 9", approved_plan=True)
+        assert result.status == "done"
+        assert result.synthesis is not None
+        return result.synthesis.coverage
+
+    def test_coverage_inline_citation_skips_missing_source_url(self, monkeypatch):
+        """AC #3: EvidenceWindow with empty `source_url` must NOT
+        appear in `coverage["inline_citations"]`. A `[doc_0:start-end]`
+        entry would be fabricated provenance pointing at the wrong
+        document.
+        """
+        from evidence import EvidenceWindow
+        from models import Claim
+
+        documents = [
+            {"url": "http://a.com/x", "text": "Some text."},
+        ]
+        state_claims = [
+            Claim(
+                text="Claim with missing source URL.",
+                evidence_window=EvidenceWindow(
+                    source_url="",  # v0.8.3-C1c trigger: empty
+                    source_title="A",
+                    offset_start=0,
+                    offset_end=10,
+                    text="Claim with missing source URL.",
+                ),
+            ),
+        ]
+        cov = self._run_with_state_claims(monkeypatch, state_claims, documents)
+        assert "inline_citations" in cov
+        # No entry should be fabricated for an empty source_url.
+        assert cov["inline_citations"] == [], (
+            f"empty source_url must yield no inline_citations entry, "
+            f"got {cov['inline_citations']!r}"
+        )
+
+    def test_coverage_inline_citation_skips_unmatched_source_url(self, monkeypatch):
+        """AC #4: EvidenceWindow whose `source_url` does not match any
+        document in `documents` must NOT appear in
+        `coverage["inline_citations"]`. The previous `or 0` fallback
+        would have produced `[doc_0:start-end]` here — a fabricated
+        citation pointing at a different document than the orphan
+        window actually came from.
+        """
+        from evidence import EvidenceWindow
+        from models import Claim
+
+        documents = [
+            {"url": "http://a.com/x", "text": "Some text."},
+            {"url": "http://b.com/y", "text": "Other text."},
+        ]
+        state_claims = [
+            Claim(
+                text="Claim from an orphan document.",
+                evidence_window=EvidenceWindow(
+                    source_url="http://orphan.com/z",  # v0.8.3-C1c trigger: unmatched
+                    source_title="Orphan",
+                    offset_start=5,
+                    offset_end=25,
+                    text="Claim from an orphan document.",
+                ),
+            ),
+        ]
+        cov = self._run_with_state_claims(monkeypatch, state_claims, documents)
+        assert "inline_citations" in cov
+        assert cov["inline_citations"] == [], (
+            f"unmatched source_url must yield no inline_citations entry, "
+            f"got {cov['inline_citations']!r}"
+        )
+
+    def test_coverage_inline_citation_keeps_valid_doc_zero(self, monkeypatch):
+        """AC #2: a valid `EvidenceWindow.source_url` that matches
+        `documents[0]` must still produce a real `[doc_0:start-end]`
+        entry. We must not confuse the valid index 0 (resolved) with
+        the unresolved None case (skipped).
+        """
+        from evidence import EvidenceWindow
+        from models import Claim
+
+        documents = [
+            {"url": "http://a.com/x", "text": "Falcon 9 has 9 engines."},
+            {"url": "http://b.com/y", "text": "Other text."},
+        ]
+        state_claims = [
+            Claim(
+                text="Falcon 9 has 9 engines.",
+                evidence_window=EvidenceWindow(
+                    source_url="http://a.com/x",  # matches documents[0]
+                    source_title="A",
+                    offset_start=0,
+                    offset_end=24,
+                    text="Falcon 9 has 9 engines.",
+                ),
+            ),
+        ]
+        cov = self._run_with_state_claims(monkeypatch, state_claims, documents)
+        assert "inline_citations" in cov
+        inline = cov["inline_citations"]
+        assert len(inline) == 1, (
+            f"matched source_url must yield one inline_citations entry, "
+            f"got {inline!r}"
+        )
+        # The marker must be a real `[doc_N:0-24]` for the matched doc
+        # (the index N depends on the runner's internal `documents`
+        # ordering, which is not part of this test's contract). It must
+        # not be skipped, and it must not be a fabricated `[doc_0:...]`
+        # pointing at the wrong document.
+        import re
+
+        assert re.search(r"\[doc_\d+:0-24\]", inline[0]), (
+            f"expected real [doc_N:0-24] marker in {inline[0]!r}"
+        )
+
+
 class TestRunResearchError:
     def test_planner_exception_caught(self, monkeypatch):
         """If `build_research_plan` raises, runner returns status='error'."""

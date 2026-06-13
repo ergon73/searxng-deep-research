@@ -75,7 +75,12 @@ from planner import ResearchPlan, build_research_plan, plan_to_state
 from ranking import rank_documents  # v0.8.1.1: source ranking
 
 # Newer stages
-from synthesis import synthesize
+from synthesis import (
+    VERDICT_CONFLICTING,
+    VERDICT_NUMERIC_MISMATCH,
+    VERDICT_REFUTES,
+    synthesize,
+)
 
 # ========================================================================
 # Public result type
@@ -347,6 +352,69 @@ def _build_inline_span_markers(
                     out[i] = None
                 else:
                     out[i] = f"[doc_{doc_index}:{window.offset_start}-{window.offset_end}]"
+            break
+    return out
+
+
+def _build_contradiction_markers(
+    fact_results: list[dict],
+    documents: list[dict],
+) -> list[str | None]:
+    """v0.8.3-C3: align contradiction/refutation span markers to fact_results.
+
+    For each fact_result whose verdict is REFUTES, NUMERIC_MISMATCH, or
+    CONFLICTING, look at the per-fact `refuting_evidence_windows` and
+    `numeric_mismatch_evidence_windows` lists (added in v0.8.3-C2-data)
+    and pick the first window whose `source_url` resolves to a document
+    in `documents` via `_doc_index_for_window`. Emit
+    `f"[doc_{i}:{start}-{end}]"` for that window; emit `None` otherwise.
+
+    Defensive: if no contradiction verdict, no windows at all, every
+    window's source_url is empty / unmatched, or windows are
+    malformed (missing required fields), the entry is `None`. We never
+    fall back to `[doc_0:start-end]` — the C1b/C1c fabrication ban
+    applies here too.
+    """
+    out: list[str | None] = [None] * len(fact_results)
+    for i, r in enumerate(fact_results):
+        if not isinstance(r, dict):
+            continue
+        verdict = r.get("verdict")
+        if verdict not in (VERDICT_REFUTES, VERDICT_NUMERIC_MISMATCH, VERDICT_CONFLICTING):
+            continue
+        # Prefer refuting windows for REFUTES / CONFLICTING, mismatch
+        # windows for NUMERIC_MISMATCH; but if the primary list is
+        # empty, fall through to the other — the C2-data contract lets
+        # a CONFLICTING fact carry either side.
+        candidates: list[dict] = []
+        for key in ("refuting_evidence_windows", "numeric_mismatch_evidence_windows"):
+            raw = r.get(key)
+            if isinstance(raw, list):
+                candidates.extend(w for w in raw if isinstance(w, dict))
+        for w in candidates:
+            src_url = w.get("source_url")
+            if not isinstance(src_url, str) or not src_url:
+                continue
+            # Reuse the strict _doc_index_for_window helper (C1b) so
+            # this path inherits the no-fabrication guarantee: an
+            # unmatched / empty source_url yields doc_index=None and
+            # the entry is skipped, never falling back to doc_0.
+            synthetic_window = EvidenceWindow(
+                text="",
+                offset_start=0,
+                offset_end=0,
+                source_url=src_url,
+            )
+            doc_index = _doc_index_for_window(synthetic_window, documents)
+            if doc_index is None:
+                continue
+            off_s = w.get("offset_start")
+            off_e = w.get("offset_end")
+            if not isinstance(off_s, int) or not isinstance(off_e, int):
+                continue
+            if off_s < 0 or off_e <= off_s:
+                continue
+            out[i] = f"[doc_{doc_index}:{off_s}-{off_e}]"
             break
     return out
 
@@ -627,6 +695,16 @@ def run_research(
         # and append to confirmed bullets. `coverage["inline_citations"]`
         # is left untouched for downstream consumers.
         span_markers = _build_inline_span_markers(fact_results, state.claims, documents)
+        # v0.8.3-C3: build per-fact contradiction/refutation span
+        # markers from the C2-data fields (`refuting_evidence_windows`,
+        # `numeric_mismatch_evidence_windows`) carried in `fact_results`.
+        # Used to render `[doc_N:start-end]` in the
+        # "Противоречия / расхождения" section of answer_markdown. No
+        # entry is emitted when the window's source_url cannot be
+        # resolved to a document in `documents` (C1b/C1c
+        # no-fabrication rule). WEAK_SUPPORT / INSUFFICIENT never get
+        # a contradiction marker here.
+        contradiction_markers = _build_contradiction_markers(fact_results, documents)
 
         synth = synthesize(
             query=query,
@@ -634,6 +712,7 @@ def run_research(
             results=fact_results,
             source_candidates=documents,
             inline_span_markers=span_markers,
+            inline_contradiction_markers=contradiction_markers,
         )
 
         # Phase 4 (#019) — span-level citation stats. Decorate the synthesis

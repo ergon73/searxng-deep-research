@@ -662,6 +662,7 @@ def _render_user_markdown(
     coverage: dict,
     contradictions: list[dict],
     inline_span_markers: list[str | None] | None = None,
+    inline_contradiction_markers: list[str | None] | None = None,
 ) -> str:
     """v0.8.3-B / B1: user-facing answer with 6 always-rendered sections.
 
@@ -689,6 +690,12 @@ def _render_user_markdown(
     matching `[doc_<int>:<int>-<int>]`) is appended to the confirmed
     bullet for `results[i]` ONLY — weak / contradiction / unverifiable
     bullets are unaffected. Misaligned list length is tolerated (defensive).
+
+    v0.8.3-C3: `inline_contradiction_markers[i]` is appended to the
+    contradiction bullet for `results[i]` ONLY — confirmed / weak /
+    unverifiable bullets are unaffected. Same validation rules as C1.
+    Both kwarg defaults are None to preserve byte-identical output
+    against v0.8.3-B1 when omitted.
     """
     url_to_id = _build_url_to_id(citations)
 
@@ -739,7 +746,20 @@ def _render_user_markdown(
                 VERDICT_CONFLICTING: "противоречие",
                 VERDICT_NUMERIC_MISMATCH: "числовое расхождение",
             }.get(verdict, "противоречие")
-            contradiction_bullets.append(f"- {claim_esc} — _{label}_ {markers}".rstrip())
+            bullet = f"- {claim_esc} — _{label}_ {markers}".rstrip()
+            # v0.8.3-C3: append a contradiction/refutation span marker
+            # (e.g. `[doc_0:8-19]`) to the contradiction bullet ONLY
+            # when one was supplied by the runner and validated as a
+            # well-formed marker. The runner (C1b/C1c) guarantees the
+            # marker is either a real `[doc_<i>:<s>-<e>]` or None; we
+            # never fabricate, and we never touch confirmed/weak/
+            # unverifiable bullets here.
+            if inline_contradiction_markers is not None and markers:
+                if i < len(inline_contradiction_markers):
+                    raw = inline_contradiction_markers[i]
+                    if isinstance(raw, str) and _SPAN_MARKER_RE.fullmatch(raw):
+                        bullet = f"{bullet} {raw}"
+            contradiction_bullets.append(bullet)
         else:  # unverifiable
             unverifiable.append(f"- {claim_esc} — _не удалось проверить_")
 
@@ -802,6 +822,7 @@ def synthesize(
     results: list[dict],
     source_candidates: list[dict],
     inline_span_markers: list[str | None] | None = None,
+    inline_contradiction_markers: list[str | None] | None = None,
 ) -> Synthesis:
     """Deterministic synthesis builder.
 
@@ -855,6 +876,7 @@ def synthesize(
         coverage=coverage,
         contradictions=contradictions,
         inline_span_markers=inline_span_markers,
+        inline_contradiction_markers=inline_contradiction_markers,
     )
     audit_markdown = _render_audit_markdown(
         query=query or "",

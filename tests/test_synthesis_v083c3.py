@@ -25,7 +25,9 @@ Acceptance criteria pinned here:
 from __future__ import annotations
 
 import pytest
+from research_runner import _build_contradiction_markers
 from synthesis import (
+    VERDICT_CONFLICTING,
     VERDICT_NUMERIC_MISMATCH,
     VERDICT_REFUTES,
     VERDICT_SUPPORTS,
@@ -375,3 +377,171 @@ def test_contradiction_markers_misaligned_length_does_not_crash(two_sources):
     assert "[doc_0:8-19]" in block
     # No fabricated [doc_1:...] for the second fact.
     assert "[doc_1:" not in block
+
+
+# ===========================================================================
+# v0.8.3-C3b: verdict-specific window selection
+# ===========================================================================
+#
+# The C3 helper initially pooled both `refuting_evidence_windows` and
+# `numeric_mismatch_evidence_windows` into a single candidate list per
+# fact, so a REFUTES fact could pick a numeric-mismatch window and vice
+# versa. C3b splits the candidate list by verdict:
+#
+#   * REFUTES  → refuting_evidence_windows only.
+#   * NUMERIC_MISMATCH → numeric_mismatch_evidence_windows only.
+#   * CONFLICTING → refuting_evidence_windows first, then
+#     numeric_mismatch_evidence_windows as fallback.
+#
+# These four tests pin the contract at the helper level (no synthesis
+# indirection) so a regression in the selection logic cannot hide
+# behind a runner-supplied None.
+
+
+def _refuting_window(url: str, start: int, end: int) -> dict:
+    return {
+        "source_url": url,
+        "quote": "не было сбито",
+        "offset_start": start,
+        "offset_end": end,
+        "method": "negation_after",
+    }
+
+
+def _mismatch_window(url: str, start: int, end: int) -> dict:
+    return {
+        "source_url": url,
+        "quote": "7 дронов",
+        "offset_start": start,
+        "offset_end": end,
+        "method": "num_mismatch",
+    }
+
+
+# --- AC #1: REFUTES ignores numeric_mismatch_evidence_windows ---------------
+
+
+def test_refutes_ignores_numeric_mismatch_window(two_sources):
+    """REFUTES fact whose `refuting_evidence_windows` is empty /
+    unresolved MUST NOT pick up a `numeric_mismatch_evidence_windows`
+    entry. The helper returns None, not a [doc_N:start-end] marker.
+
+    Pre-C3b the helper pooled both lists, so a present-but-orphan
+    numeric_mismatch_evidence_windows could leak into a REFUTES
+    bullet. C3b forbids that leak.
+    """
+    results = [
+        {
+            "fact": "refuted fact",
+            "verdict": VERDICT_REFUTES,
+            "reasoning": "neg",
+            "refuting_sources": [("http://a.com/x", 0.9, "neg")],
+            # Refuting list present but empty / non-resolving.
+            "refuting_evidence_windows": [],
+            # Numeric-mismatch list IS resolvable — the trap the C3b
+            # contract closes. REFUTES must NOT touch it.
+            "numeric_mismatch_evidence_windows": [
+                _mismatch_window("http://a.com/x", 42, 58),
+            ],
+        }
+    ]
+    out = _build_contradiction_markers(results, two_sources)
+    assert out == [None], (
+        f"REFUTES must ignore numeric_mismatch_evidence_windows; got {out!r}"
+    )
+
+
+# --- AC #2: NUMERIC_MISMATCH ignores refuting_evidence_windows ---------------
+
+
+def test_numeric_mismatch_ignores_refuting_window(two_sources):
+    """NUMERIC_MISMATCH fact whose `numeric_mismatch_evidence_windows`
+    is empty / unresolved MUST NOT pick up a
+    `refuting_evidence_windows` entry. The helper returns None."""
+    results = [
+        {
+            "fact": "5 дронов сбиты",
+            "verdict": VERDICT_NUMERIC_MISMATCH,
+            "reasoning": "diff",
+            "numeric_mismatch_sources": [
+                ("http://b.com/y", 0.85, "num_mismatch"),
+            ],
+            # Mismatch list present but empty / non-resolving.
+            "numeric_mismatch_evidence_windows": [],
+            # Refuting list IS resolvable — the symmetric trap. NUMERIC_MISMATCH
+            # must NOT touch it.
+            "refuting_evidence_windows": [
+                _refuting_window("http://b.com/y", 8, 19),
+            ],
+        }
+    ]
+    out = _build_contradiction_markers(results, two_sources)
+    assert out == [None], (
+        f"NUMERIC_MISMATCH must ignore refuting_evidence_windows; got {out!r}"
+    )
+
+
+# --- AC #3: CONFLICTING can use refuting_evidence_windows -------------------
+
+
+def test_conflicting_can_use_refuting_window(two_sources):
+    """CONFLICTING fact resolves via `refuting_evidence_windows`
+    when the first refuting window is resolvable. The helper emits
+    `[doc_0:8-19]` for the first resolvable refuting window — even
+    if a numeric_mismatch_evidence_windows entry would also be
+    resolvable, the refuting side wins (CONFLICTING prefers refuting)."""
+    results = [
+        {
+            "fact": "both-sides fact",
+            "verdict": VERDICT_CONFLICTING,
+            "reasoning": "mixed",
+            "refuting_sources": [("http://a.com/x", 0.9, "neg")],
+            "numeric_mismatch_sources": [
+                ("http://b.com/y", 0.85, "num_mismatch"),
+            ],
+            "refuting_evidence_windows": [
+                _refuting_window("http://a.com/x", 8, 19),
+            ],
+            "numeric_mismatch_evidence_windows": [
+                _mismatch_window("http://b.com/y", 42, 58),
+            ],
+        }
+    ]
+    out = _build_contradiction_markers(results, two_sources)
+    assert out == ["[doc_0:8-19]"], (
+        f"CONFLICTING must prefer refuting side when it resolves; got {out!r}"
+    )
+
+
+# --- AC #4: CONFLICTING falls back to numeric_mismatch when refuting missing -
+
+
+def test_conflicting_falls_back_to_numeric_mismatch_window_when_refuting_missing(
+    two_sources,
+):
+    """CONFLICTING fact with empty / missing
+    `refuting_evidence_windows` falls back to
+    `numeric_mismatch_evidence_windows`. The mismatch side is the
+    only available evidence window and the helper emits its marker."""
+    results = [
+        {
+            "fact": "mismatch-only conflicting fact",
+            "verdict": VERDICT_CONFLICTING,
+            "reasoning": "mixed",
+            "numeric_mismatch_sources": [
+                ("http://b.com/y", 0.85, "num_mismatch"),
+            ],
+            # Refuting list is empty → CONFLICTING must fall through
+            # to the mismatch list and pick the first resolvable
+            # entry.
+            "refuting_evidence_windows": [],
+            "numeric_mismatch_evidence_windows": [
+                _mismatch_window("http://b.com/y", 42, 58),
+            ],
+        }
+    ]
+    out = _build_contradiction_markers(results, two_sources)
+    assert out == ["[doc_1:42-58]"], (
+        f"CONFLICTING with empty refuting list must fall back to "
+        f"numeric_mismatch_evidence_windows; got {out!r}"
+    )

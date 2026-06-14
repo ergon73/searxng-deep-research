@@ -786,8 +786,18 @@ def _render_user_markdown(
     # marker. This avoids a "note explains a marker that is nowhere
     # to be found" UX trap, and also keeps the C1 contract
     # (`"[doc_" not in md` for unverifiable claims) intact.
-    has_span_markers = any("[doc_" in b for b in confirmed) or any(
-        "[doc_" in b for b in contradiction_bullets
+    # v0.8.4-A1: replace the raw `"[doc_" in b` substring check with
+    # a validated regex search. The regex `_SPAN_MARKER_RE` only
+    # matches well-formed `[doc_<int>:<int>-<int>]` markers, so prose
+    # that happens to contain the literal `[doc_` (e.g. a quote with
+    # `[doc_abc]` or a URL parameter `[doc_foo]`) no longer triggers
+    # a false positive. The normal case (a real marker rendered into
+    # a bullet) is unaffected: the regex matches anywhere in the
+    # bullet, which is what the substring check did. Search (not
+    # fullmatch) because the marker is typically a suffix on a longer
+    # bullet string like `- cited fact [1] [doc_0:120-187]`.
+    has_span_markers = any(_SPAN_MARKER_RE.search(b) for b in confirmed) or any(
+        _SPAN_MARKER_RE.search(b) for b in contradiction_bullets
     )
 
     # v0.8.3-B1: short answer synopsis uses user-bucket counts, not raw coverage.

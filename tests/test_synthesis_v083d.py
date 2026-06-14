@@ -254,3 +254,107 @@ def test_existing_contradiction_span_marker_output_unchanged_except_note():
     assert "[doc_1:42-58]" in md_nm
     assert "[2]" in md_nm  # b.com is the second source
     assert PROVENANCE_NOTE in _sources_block(md_nm)
+
+
+# --- v0.8.4-A1: false-positive guard for non-marker [doc_ prose ------------
+
+
+def test_provenance_note_not_triggered_by_non_marker_doc_like_text():
+    """A bullet whose text contains a `[doc_...`-looking substring
+    that is **not** a well-formed `[doc_<int>:<int>-<int>]` marker
+    must NOT trigger the provenance note in `## Источники`.
+
+    The v0.8.3-D1 implementation used a raw `"[doc_" in b` substring
+    check to decide whether the note is needed. That check fires on
+    **any** bullet that contains the literal `[doc_` — including a
+    URL like `http://a.com/[doc_fake]/x` whose `[doc_fake]` fragment
+    survives the `_md_escape` pass (URLs are not escaped in the
+    citation table). The v0.8.4-A1 batch replaced the substring check
+    with a validated regex search (`_SPAN_MARKER_RE.search(b)`), which
+    only matches a well-formed `[doc_<int>:<int>-<int>]`. This test
+    pins the false-positive fix: prose-only bullets (no real marker
+    rendered) must NOT produce a note.
+
+    Companion positive case (AC #3): when a real marker IS rendered,
+    the note must still appear. Both shapes are exercised in the same
+    test so a regression in either direction shows up here.
+    """
+    two_sources = _two_sources()
+
+    # --- negative: URL contains [doc_fake] but no real marker ---
+    # When a source_candidate URL contains the literal `[doc_fake]`,
+    # the citation table renders the URL as `[A](http://a.com/[doc_fake]/x)`
+    # — note that `_md_escape` is NOT applied to URLs (it only escapes
+    # the title, see `src/synthesis.py:830`). So the substring `[doc_`
+    # survives in the rendered markdown, and the OLD substring check
+    # would falsely fire on it. The NEW regex check rejects the
+    # literal (no digit run + no `:digit-digit` pattern after `[doc_`)
+    # and the note is suppressed.
+    two_sources_prose = [
+        {"url": "http://a.com/[doc_fake]/x", "title": "A", "text": "snippet A"},
+        {"url": "http://b.com/y", "title": "B", "text": "snippet B"},
+    ]
+    prose_results = [
+        {
+            "fact": "cited fact",
+            "verdict": VERDICT_SUPPORTS,
+            "reasoning": "ok",
+            "source_urls": ["http://a.com/[doc_fake]/x"],
+        }
+    ]
+    s_prose = synthesize(
+        query="q",
+        claims=["cited fact"],
+        results=prose_results,
+        source_candidates=two_sources_prose,
+        # No inline_span_markers. The URL's `[doc_fake]` survives
+        # in the rendered citation table, putting the substring
+        # `[doc_` into the markdown without a digit run following it.
+    )
+    md_prose = s_prose.answer_markdown
+    # Sanity: the URL with `[doc_fake]` is in the markdown, and the
+    # substring is there (so the test would have caught a real
+    # false positive in the old substring-check code).
+    assert "http://a.com/[doc_fake]/x" in md_prose, (
+        f"prose URL with [doc_fake] missing from answer_markdown:"
+        f"\n{md_prose!r}"
+    )
+    assert "[doc_" in md_prose, (
+        f"substring '[doc_' is absent — the false-positive scenario "
+        f"isn't actually being exercised, got:\n{md_prose!r}"
+    )
+    # The actual fix: the note must NOT be in the sources section.
+    assert PROVENANCE_NOTE not in _sources_block(md_prose), (
+        f"provenance note was triggered by non-marker '[doc_' URL "
+        f"fragment (regression of v0.8.3-D1 substring check). "
+        f"answer_markdown:\n{md_prose!r}"
+    )
+    # The whole markdown must also be free of the note.
+    assert PROVENANCE_NOTE not in md_prose
+
+    # --- positive: a real [doc_<int>:<int>-<int>] marker renders ---
+    real_results = [
+        {
+            "fact": "cited fact",
+            "verdict": VERDICT_SUPPORTS,
+            "reasoning": "ok",
+            "source_urls": ["http://a.com/x"],
+        }
+    ]
+    s_real = synthesize(
+        query="q",
+        claims=["cited fact"],
+        results=real_results,
+        source_candidates=two_sources,
+        inline_span_markers=["[doc_0:120-187]"],
+    )
+    md_real = s_real.answer_markdown
+    # Sanity: the real marker is rendered.
+    assert "[doc_0:120-187]" in md_real
+    # The note MUST appear in the sources section — proves the regex
+    # check is not over-strict (would otherwise be a false negative).
+    assert PROVENANCE_NOTE in _sources_block(md_real), (
+        f"real span marker did NOT trigger the provenance note — "
+        f"regression of v0.8.4-A1 regex-strict detection. "
+        f"answer_markdown:\n{md_real!r}"
+    )

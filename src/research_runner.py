@@ -367,7 +367,7 @@ def _build_contradiction_markers(
     CONFLICTING, the helper consults a verdict-specific candidate
     list, picks the first window whose `source_url` resolves to a
     document in `documents` via `_doc_index_for_window`, and emits
-    `f"[doc_{i}:{start-end}]"`. Otherwise the entry is `None`.
+    `[doc_N:start-end]`. Otherwise the entry is `None`.
 
     Verdict-specific candidate lists:
 

@@ -31,6 +31,10 @@
 - **#013** — `OPEN 2026-06-06` — `reformulate()` broken (returns None for 100% queries; 20/20 baseline + 13/13 long-query tests). EN-fallback для RU потерян.
 - **#014** — `MITIGATED 2026-06-06` — long-query degradation. Было: median top-1 score 0.48 для 200-400w запросов vs 1.0 для short (50% drop), sub-aspect coverage 0% для multi-aspect, 1/10 long queries возвращал 0 sources. **Mitigated via query-adaptation skill (v1.0.0) + alt_queries параметр в deep_research()**: 3-query re-eval показал L1 +0.39, L8 +0.83 (unblocked 0→0.83), L4 -0.13 (extractor issue, см. #015). Net: 2/3 улучшились, 1/3 ухудшилась (edge case), 1/3 unblocked. **NOT FULLY CLOSED** — нужны v1.0.1 улучшения (narrative entity filtering, LLM fallback).
 - **#015** — `OPEN 2026-06-06` — narrative entity filtering. Запрос L4 ("стартап из 5 человек, ... Gemma 4 12B, Phi-4 Mini, ...") — extractor поднял "5 человек" как entity (top score выше чем "Gemma 4 12B"), в результате main_query = "Gemma 4 5 человек" — бессмысленно. **Нужен**: фильтр чисел в narrative context (не коды моделей), PoS-tagging (light), или LLM-based entity filtering. Low priority (1/3 edge case), но ухудшает average.
+- **#028** — `DEFERRED→D2 2026-06-14` — duplicate `[doc_<int>:<int>-<int>]` regex. `_SPAN_MARKER_RE` (in `src/synthesis.py`) and `_CITATION_RE` (in `src/citations.py`) are two regexes for the same shape. Consolidate to one in a single module. Cosmetic / drift risk, no runtime impact. Surfaced by v0.8.3-D0 audit. Tracked in `RELEASE_NOTES_v0.8.3.md` P2 section.
+- **#029** — `DEFERRED→D2 2026-06-14` — centralize `[doc_N:start-end]` formatting. Three code paths emit the same `f"[doc_{N}:{start}-{end}]"` format string: `_build_inline_span_markers` / `_build_contradiction_markers` (in `src/research_runner.py`) and `format_cited_claim` (in `src/citations.py`). Extract a single `format_span_marker(doc_index, start, end)` helper. Drift risk if any one is updated and the others aren't. Surfaced by v0.8.3-D0 audit. Tracked in `RELEASE_NOTES_v0.8.3.md` P2 section.
+- **#030** — `DEFERRED→D2 2026-06-14` — `Citation.source_index` decision. Field is defined and populated (= `id - 1`, 0-based index in dedup'd `source_candidates`) in `src/synthesis.py::Citation`, but **not** exported in `to_dict()`. Decision needed: remove (dead) or wire it (expose for `eval.py` / downstream consumers). Surfaced by v0.8.3-D0 audit. Tracked in `RELEASE_NOTES_v0.8.3.md` P2 section. **Plus** a cosmetic docstring typo: `_build_contradiction_markers` docstring has a `f"[doc_{i}:{start-end}]"` placeholder (double hyphen, not a real `f-string` template); no runtime impact, just stale documentation after the C3 batch.
+- **#031** — `DEFERRED→D2 2026-06-14` — use `_SPAN_MARKER_RE` instead of raw `"[doc_"` detection. The D1 `has_span_markers` flag in `_render_user_markdown` uses `any("[doc_" in b for b in ...)`. A safer test would use the validated regex (`_SPAN_MARKER_RE.search`) to avoid false positives on prose that happens to contain `[doc_` (e.g. in a quote or a `[doc_` URL parameter). Tracked in `RELEASE_NOTES_v0.8.3.md` P2 section.
 
 ### LOW (informational)
 - **#007** — `WONTFIX` — `meta["engines"]` counting `""` as engine (pre-existing)
@@ -272,6 +276,121 @@ to implement them and they are not blocking v0.8.x.
 | **#025** — `WONTFIX` Split eval into 5 separate evals (A/B/C/D/E) | rejected | Over-engineering for 1 metric, low ROI |
 | **#026** — `WONTFIX` `use_default_settings.engines.keep_only` rewrite | rejected | Current explicit engine list works, no reproducibility issue observed |
 | **#027** — `WONTFIX` Multi-agent roles in separate processes | rejected | Functions in one process are sufficient at this scale |
+
+---
+
+## v0.8.3 release-prep P2 detail (audit-surfaced 2026-06-14)
+
+These four P2 items were surfaced by the v0.8.3-D0 audit and
+tracked here per project convention. None of them were started in
+v0.8.3; all are deferred to a future `D2` doc-cleanup batch.
+Cross-referenced in `RELEASE_NOTES_v0.8.3.md`.
+
+### #028 — duplicate `[doc_<int>:<int>-<int>]` regex [MEDIUM | DEFERRED→D2 | 2026-06-14]
+
+**Что:** Two regexes for the same shape:
+
+- `src/synthesis.py` defines `_SPAN_MARKER_RE` for
+  `[doc_<int>:<int>-<int>]` (validates inline span markers
+  appended to confirmed / contradiction bullets).
+- `src/citations.py` defines `_CITATION_RE` for the same
+  pattern (used by `format_cited_claim` and downstream
+  consumers of `coverage["inline_citations"]`).
+
+**Зачем:** Drift risk. If the format ever needs to change
+(e.g. add a `method` field, or extend the offsets to UTF-8
+codepoints instead of chars), only one of the two regexes
+might get updated, and the other path would silently fail to
+match.
+
+**Fix sketch:** Consolidate into a single
+`SPAN_MARKER_RE = re.compile(r"\[doc_(\d+):(\d+)-(\d+)\]")`
+in `src/citations.py` (the older module), and have
+`src/synthesis.py` import it. The synthesis module
+specifically avoids importing `citations.py` per a pinned
+C1 contract; the consolidation may need a one-line
+"forwarder" in `synthesis.py` that re-exports the regex
+under the existing name `_SPAN_MARKER_RE`.
+
+### #029 — centralize `[doc_N:start-end]` formatting [MEDIUM | DEFERRED→D2 | 2026-06-14]
+
+**Что:** Three code paths emit the same format string
+`f"[doc_{N}:{start}-{end}]"`:
+
+1. `_build_inline_span_markers` in
+   `src/research_runner.py` (C1 path).
+2. `_build_contradiction_markers` in
+   `src/research_runner.py` (C3 path).
+3. `format_cited_claim` in `src/citations.py`
+   (provenance helper used by `coverage["inline_citations"]`).
+
+**Зачем:** Same drift risk as #028. Plus, the current
+naming of the parameter is inconsistent:
+`_build_*` helpers call it `doc_index`,
+`format_cited_claim` calls it `doc_index` too — lucky
+consistency, but easy to break.
+
+**Fix sketch:** Extract a single helper, e.g.
+`format_span_marker(doc_index: int, start: int, end: int) -> str`
+in `src/citations.py` (where the format is canonically
+defined), and have all three callers use it. Tests assert
+the literal `[doc_<int>:<int>-<int>]` shape; the helper
+keeps that contract.
+
+### #030 — `Citation.source_index` decision + docstring typo [MEDIUM | DEFERRED→D2 | 2026-06-14]
+
+**Что (1):** `src/synthesis.py::Citation` defines
+`source_index: int` and populates it as `i - 1` (0-based
+index in dedup'd `source_candidates`) inside
+`_build_citation_table`. The field is **not** exported in
+`Citation.to_dict()` (which only ships `id, url, title,
+quote`). The field is also never read by any code in
+`src/` or `tests/`.
+
+**Зачем:** Either it's dead code (the dataclass carries an
+unused field) or it's reserved for a future consumer
+(`eval.py`, an LLM-prompt assembler, an audit export). The
+audit cannot tell which without a code-author signal.
+
+**Decision needed:** remove (dead) or wire (expose in
+`to_dict()` and document a consumer).
+
+**Что (2) — bonus:** `_build_contradiction_markers`
+docstring (in `src/research_runner.py`) has a
+`f"[doc_{i}:{start-end}]"` placeholder — the `{start-end}`
+is a **double hyphen**, not a real `f-string` template.
+Cosmetic, no runtime impact. The v0.8.3 series tracked
+this as a P2 (do not create a C3c). Will be cleaned up in
+the same D2 batch as a one-line docstring fix.
+
+### #031 — use `_SPAN_MARKER_RE` instead of raw `"[doc_"` detection [MEDIUM | DEFERRED→D2 | 2026-06-14]
+
+**Что:** The D1 `has_span_markers` flag in
+`_render_user_markdown` (in `src/synthesis.py`) uses
+`any("[doc_" in b for b in (confirmed + contradiction_bullets))`.
+That's a substring check, not a regex match.
+
+**Зачем:** If a bullet ever contains the literal `[doc_` in
+prose (e.g. a quote that includes a URL parameter, or a
+URL fragment with the literal text `[doc_`), the
+substring check would falsely report a span marker and
+trigger the provenance note. The validated regex
+(`_SPAN_MARKER_RE.search(b) is not None`) is strictly
+safer and matches the validation logic used in
+`_render_user_markdown` itself for inline span markers
+(line ~730 and line ~760).
+
+**Fix sketch:** Replace the substring check with a
+regex-based check, e.g.
+`has_span_markers = any(_SPAN_MARKER_RE.search(b) for b in confirmed) or any(_SPAN_MARKER_RE.search(b) for b in contradiction_bullets)`.
+The regex is already imported in `synthesis.py`; no new
+imports. Test: add a unit test that puts `[doc_` in a
+quote (not a marker) and verifies the note is still
+suppressed — and another that puts a real
+`[doc_<int>:<int>-<int>]` in a quote and verifies the note
+**is** appended (because the regex matches the marker, not
+the quote prose). This last case is the gap the current
+substring check has.
 
 ---
 

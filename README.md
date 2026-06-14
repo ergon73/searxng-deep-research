@@ -2,7 +2,7 @@
 
 Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check.
 
-**Version:** v0.8.2 (10 June 2026)
+**Version:** v0.8.3 (14 June 2026)
 **Status:** hardening release. See `.hermes/plans/ISSUES.md` and `SECURITY.md` for current state.
 **Recommended entrypoint:** `src/research_runner.py::run_research()` / `deep_research_v2()`.
 **Legacy entrypoint:** `src/hermes_deepresearch.py::deep_research()` (untouched, still works).

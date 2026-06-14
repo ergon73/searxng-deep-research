@@ -696,6 +696,17 @@ def _render_user_markdown(
     unverifiable bullets are unaffected. Same validation rules as C1.
     Both kwarg defaults are None to preserve byte-identical output
     against v0.8.3-B1 when omitted.
+
+    v0.8.3-D1: when at least one span marker is rendered into any
+    bullet (i.e. the runner passed a non-None entry in either
+    `inline_span_markers` or `inline_contradiction_markers`), a short
+    provenance note is appended to the "## Источники" section. The
+    note explains that `[N]` is the 1-based citation table id and
+    `[doc_M:start-end]` is a technical 0-based pointer into the
+    source document. It is purely textual — no marker format change
+    and no citation-id remapping. The note is suppressed entirely
+    when no span marker is present, so legacy / marker-free answers
+    remain byte-identical to v0.8.3-B1.
     """
     url_to_id = _build_url_to_id(citations)
 
@@ -763,6 +774,22 @@ def _render_user_markdown(
         else:  # unverifiable
             unverifiable.append(f"- {claim_esc} — _не удалось проверить_")
 
+    # v0.8.3-D1: a span marker exists in answer_markdown iff at least
+    # one of the rendered bullets (confirmed or contradiction bucket)
+    # actually carries the `[doc_M:start-end]` substring. We derive
+    # the flag from the rendered bullet lists (rather than from the
+    # runner's input kwargs) so the note tracks **what is visible to
+    # the user**, not what the runner intended. A runner that passes
+    # `inline_span_markers=["[doc_0:8-19]"]` for an INSUFFICIENT
+    # verdict will not have the marker in any bullet — and the note
+    # must not appear either, since the user does not see any span
+    # marker. This avoids a "note explains a marker that is nowhere
+    # to be found" UX trap, and also keeps the C1 contract
+    # (`"[doc_" not in md` for unverifiable claims) intact.
+    has_span_markers = any("[doc_" in b for b in confirmed) or any(
+        "[doc_" in b for b in contradiction_bullets
+    )
+
     # v0.8.3-B1: short answer synopsis uses user-bucket counts, not raw coverage.
     short = _short_answer(
         query=query,
@@ -805,6 +832,18 @@ def _render_user_markdown(
                 parts.append(f"  > {_md_escape(_truncate(c.quote, MAX_QUOTE_CHARS))}")
     else:
         parts.append("_нет_")
+    # v0.8.3-D1: provenance note in the "## Источники" section, only
+    # when at least one `[doc_M:start-end]` span marker was rendered
+    # into a bullet above. The note is purely textual and does not
+    # change any marker, citation id, or section ordering. Suppressed
+    # when no span markers are present (legacy / marker-free answers
+    # stay byte-identical to v0.8.3-B1).
+    if has_span_markers:
+        parts.append(
+            "_Примечание: [N] — номер источника в списке ниже; "
+            "[doc_M:start-end] — технический указатель на фрагмент "
+            "в документе M с символьными offset-ами._"
+        )
     parts.append("")
 
     md = "\n".join(parts)

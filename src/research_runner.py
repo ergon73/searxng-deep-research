@@ -125,10 +125,48 @@ class ResearchResult:
 # ========================================================================
 
 
+def _search_provenance(
+    task: SearchTask,
+    *,
+    rank: int,
+) -> dict[str, Any]:
+    """Build a JSON-serializable provenance entry for a search hit.
+
+    `rank` is the 1-based position of the hit within this task's result list.
+    """
+    return {
+        "task_query": task.query,
+        "task_route": task.route,
+        "task_priority": task.priority,
+        "task_rationale": task.rationale,
+        "engines": task.engines,
+        "categories": task.categories,
+        "time_range": task.time_range,
+        "rank": rank,
+    }
+
+
+def _attach_provenance(
+    hits: list[dict],
+    task: SearchTask,
+) -> list[dict]:
+    """Attach a `_search_provenance` list to each hit from a SearchTask."""
+    out: list[dict] = []
+    for rank, h in enumerate(hits, start=1):
+        provenance: list[dict[str, Any]] = list(h.get("_search_provenance", []))
+        provenance.append(_search_provenance(task, rank=rank))
+        out.append({**h, "_search_provenance": provenance})
+    return out
+
+
 def _dispatch_search_task(task: SearchTask, *, max_results: int = 5) -> list[dict]:
     """Send a single SearchTask to SearXNG. Returns raw hits.
 
     Pulled out as a helper so tests can monkeypatch it.
+
+    v0.9-B: each returned hit carries a `_search_provenance` list describing
+    the task that produced it (query, route, engines, categories, time_range,
+    priority, rationale, and original 1-based rank).
     """
     # Build kwargs without None values — web_search signature has
     # explicit `lang: str = "ru"` and may not accept None.
@@ -141,7 +179,8 @@ def _dispatch_search_task(task: SearchTask, *, max_results: int = 5) -> list[dic
         kwargs["engines"] = task.engines
     if task.categories is not None:
         kwargs["categories"] = task.categories
-    return web_search(task.query, **kwargs)
+    raw_hits = web_search(task.query, **kwargs)
+    return _attach_provenance(raw_hits, task)
 
 
 def _task_key(task: SearchTask) -> tuple:
@@ -161,7 +200,7 @@ def _task_key(task: SearchTask) -> tuple:
     )
 
 
-def _fetch_documents(urls: list[str], *, max_chars: int = MAX_CONTENT_CHARS) -> list[dict]:
+def _fetch_documents(urls: list[str]) -> list[dict]:
     """Fetch a list of URLs in parallel, return list of {url, text, title, ...}.
 
     The returned list preserves the order of the input `urls`. This is
@@ -171,10 +210,15 @@ def _fetch_documents(urls: list[str], *, max_chars: int = MAX_CONTENT_CHARS) -> 
 
     Implementation: dispatch all fetches, collect results into a
     `by_url` dict keyed by URL, then re-emit in the original order.
+
+    v0.9-B: the caller is expected to pass deduplicated hits (or at least
+    URL strings). Provenance is not available here because we receive only
+    URLs; it is attached to the hit dicts before this stage and copied onto
+    the document dict by `_copy_hit_provenance_to_doc`.
     """
     by_url: dict[str, dict] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCH) as ex:
-        futures = {ex.submit(fetch_url, u, max_chars=max_chars): u for u in urls}
+        futures = {ex.submit(fetch_url, u, max_chars=MAX_CONTENT_CHARS): u for u in urls}
         for fut in concurrent.futures.as_completed(futures):
             u = futures[fut]
             try:
@@ -192,17 +236,53 @@ def _fetch_documents(urls: list[str], *, max_chars: int = MAX_CONTENT_CHARS) -> 
     return [by_url.get(u, {"url": u, "error": "missing fetch result"}) for u in urls]
 
 
+def _copy_hit_provenance_to_doc(hit: dict, doc: dict) -> dict:
+    """Copy `_search_provenance` from a search hit to its fetched document.
+
+    v0.9-B: preserves provenance metadata through the fetch boundary without
+    altering text/title/url semantics. If the hit has no provenance, the doc
+    receives an empty list for consistency.
+    """
+    doc["_search_provenance"] = list(hit.get("_search_provenance", []))
+    return doc
+
+
+def _fetch_documents_from_hits(hits: list[dict]) -> list[dict]:
+    """Fetch documents for a list of hit dicts, preserving provenance.
+
+    Convenience wrapper around `_fetch_documents` that copies
+    `_search_provenance` from each hit onto its fetched document.
+    """
+    urls = [h.get("url", "") for h in hits]
+    docs = _fetch_documents(urls)
+    for h, d in zip(hits, docs, strict=True):
+        _copy_hit_provenance_to_doc(h, d)
+    return docs
+
+
 def _dedup_hits_by_canonical(hits: list[dict]) -> list[dict]:
-    """Deduplicate search hits by canonical URL, preserving first occurrence."""
-    seen: set[str] = set()
-    out: list[dict] = []
+    """Deduplicate search hits by canonical URL, preserving first occurrence.
+
+    v0.9-B: merges `_search_provenance` lists when multiple hits canonicalize
+    to the same URL. Order is preserved by dispatch order; exact duplicate
+    provenance entries are deduplicated.
+    """
+    seen: dict[str, dict] = {}
     for h in hits:
         u = canonical_url(h.get("url", ""))
-        if not u or u in seen:
+        if not u:
             continue
-        seen.add(u)
-        out.append({**h, "url": u})
-    return out
+        if u in seen:
+            existing = seen[u]
+            incoming: list[dict[str, Any]] = h.get("_search_provenance", [])
+            merged: list[dict[str, Any]] = existing.get("_search_provenance", [])
+            for entry in incoming:
+                if entry not in merged:
+                    merged.append(entry)
+            existing["_search_provenance"] = merged
+            continue
+        seen[u] = {**h, "url": u}
+    return list(seen.values())
 
 
 def _extract_claims_from_documents(
@@ -610,7 +690,9 @@ def run_research(
                 state.gaps.append("no_search_results")
                 break
 
-            iter_documents = _fetch_documents(candidate_urls)
+            iter_documents = _fetch_documents_from_hits(
+                [h for h in deduped_hits if h.get("url", "") in candidate_urls],
+            )
             # v0.8.1.1: rank documents by combined source_score before
             # selecting top1 or feeding synthesis. This is the fix for
             # ChatGPT P1 #001 ("top-1 = documents[0]" was just URL order).
@@ -843,6 +925,7 @@ def deep_research_v2(
     approved_plan: bool = False,
     max_iterations: int = 1,
     use_llm: bool = False,
+    top_n: int = 4,
 ) -> ResearchResult:
     """Alias for `run_research`. Matches the proposed name in the
     external review (`research-runner.md` §Phase 3, function `deep_research_v2`).
@@ -852,4 +935,5 @@ def deep_research_v2(
         approved_plan=approved_plan,
         max_iterations=max_iterations,
         use_llm=use_llm,
+        top_n=top_n,
     )

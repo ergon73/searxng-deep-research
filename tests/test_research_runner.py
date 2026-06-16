@@ -35,7 +35,9 @@ from research_runner import (  # noqa: E402
     _dispatch_search_task,
     _extract_claims_from_documents,
     _fetch_documents,
+    _fetch_documents_from_hits,
     _flatten_verification_results,
+    _search_provenance,
     _task_key,
     deep_research_v2,
     run_research,
@@ -180,6 +182,59 @@ class TestDedupHits:
         assert len(deduped) <= 2
 
 
+    def test_dedup_merges_provenance(self):
+        """v0.9-B: duplicate canonical URLs merge _search_provenance lists."""
+
+        task_a = SearchTask(query="qA", route="news", priority=100, rationale="main")
+        task_b = SearchTask(query="qB", route="general", priority=70, rationale="variant")
+        hits = [
+            {**_make_hit("https://example.com/x?fbclid=abc"), "_search_provenance": [_search_provenance(task_a, rank=1)]},
+            {**_make_hit("https://example.com/x"), "_search_provenance": [_search_provenance(task_b, rank=2)]},
+        ]
+        deduped = _dedup_hits_by_canonical(hits)
+        assert len(deduped) == 1
+        prov = deduped[0]["_search_provenance"]
+        assert len(prov) == 2
+        assert prov[0]["task_query"] == "qA"
+        assert prov[0]["rank"] == 1
+        assert prov[1]["task_query"] == "qB"
+        assert prov[1]["rank"] == 2
+
+    def test_dedup_deduplicates_identical_provenance_entries(self):
+        """v0.9-B: exact duplicate provenance entries are not duplicated."""
+
+        task = SearchTask(query="q", route="news", priority=100, rationale="main")
+        entry = _search_provenance(task, rank=1)
+        hits = [
+            {**_make_hit("https://example.com/x"), "_search_provenance": [entry]},
+            {**_make_hit("https://example.com/x"), "_search_provenance": [entry]},
+        ]
+        deduped = _dedup_hits_by_canonical(hits)
+        assert len(deduped) == 1
+        assert len(deduped[0]["_search_provenance"]) == 1
+
+    def test_dedup_backward_compat_no_provenance(self):
+        """v0.9-B: hits without _search_provenance still dedup and survive."""
+        hits = [
+            _make_hit("https://example.com/x?utm_source=a"),
+            _make_hit("https://example.com/x"),
+        ]
+        deduped = _dedup_hits_by_canonical(hits)
+        assert len(deduped) == 1
+
+    def test_dedup_preserves_dispatch_order_for_provenance(self):
+        """v0.9-B: merged provenance preserves first-occurrence order."""
+
+        task_first = SearchTask(query="first", route="news", priority=100)
+        task_second = SearchTask(query="second", route="general", priority=70)
+        hits = [
+            {**_make_hit("https://example.com/x"), "_search_provenance": [_search_provenance(task_second, rank=1)]},
+            {**_make_hit("https://example.com/x"), "_search_provenance": [_search_provenance(task_first, rank=1)]},
+        ]
+        deduped = _dedup_hits_by_canonical(hits)
+        assert [p["task_query"] for p in deduped[0]["_search_provenance"]] == ["second", "first"]
+
+
 # ------------------------------------------------------- _dispatch_search_task
 
 
@@ -209,6 +264,18 @@ class TestDispatchSearchTask:
         assert captured["categories"] == "news"
         assert captured["max_results"] == 5
         assert len(hits) == 1
+        # v0.9-B: provenance is attached to each hit
+        assert "_search_provenance" in hits[0]
+        prov = hits[0]["_search_provenance"]
+        assert len(prov) == 1
+        assert prov[0]["task_query"] == "БПЛА Москва"
+        assert prov[0]["task_route"] == "news"
+        assert prov[0]["task_priority"] == task.priority
+        assert prov[0]["task_rationale"] == task.rationale
+        assert prov[0]["engines"] == "duckduckgo,bing"
+        assert prov[0]["categories"] == "news"
+        assert prov[0]["time_range"] == "day"
+        assert prov[0]["rank"] == 1
 
     def test_auto_language_omitted(self, monkeypatch):
         captured = {}
@@ -231,11 +298,44 @@ class TestDispatchSearchTask:
 
         monkeypatch.setattr("research_runner.web_search", stub)
         task = SearchTask(query="x")  # all defaults
-        _dispatch_search_task(task)
+        hits = _dispatch_search_task(task)
         assert "lang" not in captured
         assert "time_range" not in captured
         assert "engines" not in captured
         assert "categories" not in captured
+        # v0.9-B: even with omitted kwargs, provenance carries task fields
+        assert len(hits) == 0
+
+    def test_dispatch_preserves_original_rank(self, monkeypatch):
+        """v0.9-B: provenance rank must be 1-based index within this task's hits."""
+
+        def stub(query, **kwargs):
+            return [
+                _make_hit(f"https://example.com/{i}")
+                for i in range(3)
+            ]
+
+        monkeypatch.setattr("research_runner.web_search", stub)
+        task = SearchTask(query="rank test", route="general")
+        hits = _dispatch_search_task(task, max_results=10)
+        assert len(hits) == 3
+        for i, h in enumerate(hits):
+            assert h["_search_provenance"][0]["rank"] == i + 1
+
+    def test_dispatch_continues_existing_provenance(self, monkeypatch):
+        """v0.9-B: if a raw hit already has _search_provenance, append to it."""
+
+        def stub(query, **kwargs):
+            return [
+                {**_make_hit("https://example.com/x"), "_search_provenance": [{"task_query": "previous"}]},
+            ]
+
+        monkeypatch.setattr("research_runner.web_search", stub)
+        task = SearchTask(query="continuity", route="general")
+        hits = _dispatch_search_task(task)
+        assert len(hits[0]["_search_provenance"]) == 2
+        assert hits[0]["_search_provenance"][0]["task_query"] == "previous"
+        assert hits[0]["_search_provenance"][1]["task_query"] == "continuity"
 
 
 # -------------------------------------------------------- _fetch_documents
@@ -258,6 +358,41 @@ class TestFetchDocuments:
         assert len(docs) == 1
         assert docs[0]["url"] == "https://a.com"
         assert "error" in docs[0]
+
+    def test_fetch_documents_from_hits_preserves_provenance(self, monkeypatch):
+        """v0.9-B: _fetch_documents_from_hits copies _search_provenance onto docs."""
+        monkeypatch.setattr(
+            "research_runner.fetch_url",
+            lambda url, **kw: _make_doc(url, text="body"),
+        )
+        hits = [
+            {
+                "url": "https://a.com",
+                "_search_provenance": [
+                    {"task_query": "q1", "task_route": "news", "rank": 1},
+                ],
+            },
+            {
+                "url": "https://b.com",
+                "_search_provenance": [
+                    {"task_query": "q2", "task_route": "general", "rank": 2},
+                ],
+            },
+        ]
+        docs = _fetch_documents_from_hits(hits)
+        assert len(docs) == 2
+        assert docs[0]["_search_provenance"][0]["task_query"] == "q1"
+        assert docs[1]["_search_provenance"][0]["task_query"] == "q2"
+
+    def test_fetch_documents_from_hits_backward_compat_no_provenance(self, monkeypatch):
+        """v0.9-B: hits without _search_provenance produce docs with empty list."""
+        monkeypatch.setattr(
+            "research_runner.fetch_url",
+            lambda url, **kw: _make_doc(url, text="body"),
+        )
+        docs = _fetch_documents_from_hits([{"url": "https://a.com"}])
+        assert len(docs) == 1
+        assert docs[0].get("_search_provenance") == []
 
 
 # -------------------------------------------------- _extract_claims_from_documents
@@ -1663,3 +1798,4 @@ class TestPhaseBConfirmationGateNotMutatingPlan:
         # We don't know exactly what build_research_plan returns, but the
         # runner should NOT have added any gap-fill tasks (it returned
         # before the loop started).
+        assert result.plan is not None

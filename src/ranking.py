@@ -1,5 +1,5 @@
 """
-Source ranking for deep research pipeline (v0.8.1.1 hardening).
+Source ranking for deep research pipeline (v0.9-C1).
 
 ChatGPT P1 (v0.8.0 review): research_runner.py used `top1 = iter_documents[0]`,
 which is just "the first URL we happened to ask SearXNG for" — not the
@@ -9,19 +9,26 @@ against short, highly-relevant ones simply because of fetch order.
 Fix: rank documents by a combined `source_score` BEFORE selecting top1
 or top-N. The score blends four cheap, deterministic signals:
 
-  1. content_score  — _confidence-like heuristic on the document text:
-                      length (log-scaled to 2000) + query term coverage
-                      + noise penalty. Reuses the same heuristic that
-                      `hermes_deepresearch._confidence` uses, so legacy
-                      and v2 paths agree on what "good content" means.
-  2. position_score  — 1 / (1 + original_index). If the URL came 1st from
-                      SearXNG, it gets ~0.5; 2nd gets ~0.33; etc. This
-                      is SearXNG's prior — we don't ignore it, just
-                      down-weight it so it can't dominate fresh signals.
-  3. length_score    — small bonus for documents with at least 500 chars
-                      of extracted text (avoids picking empty/404 pages).
-  4. error_penalty   — if a fetch failed (error != None), score = 0
-                      regardless of other signals.
+  1. search_score     — v0.9-B `_search_provenance` search signal. If a
+                        fetched document carries provenance from one or more
+                        SearchTasks, we combine true per-task SearXNG rank
+                        with a query-vote signal. Falls back to
+                        `position_score` for legacy docs that have no
+                        provenance.
+  2. content_score    — _confidence-like heuristic on the document text:
+                        length (log-scaled to 2000) + query term coverage
+                        + noise penalty. Reuses the same heuristic that
+                        `hermes_deepresearch._confidence` uses, so legacy
+                        and v2 paths agree on what "good content" means.
+  3. position_score   — 1 / (1 + original_index). At original_index=0 it
+                        gets 1.0; index=1 gets 0.5; index=2 gets ~0.33. This
+                        is SearXNG's prior — we don't ignore it, just
+                        down-weight it so it can't dominate fresh signals.
+                        Used only when provenance is absent.
+  4. length_score     — small bonus for documents with at least 500 chars
+                        of extracted text (avoids picking empty/404 pages).
+  5. error_penalty    — if a fetch failed (error != None), score = 0
+                        regardless of other signals.
 
 Final source_score is in [0, 1]. Ties are broken by URL alphabetical
 order (deterministic — same input always yields same output, so
@@ -56,6 +63,56 @@ def _position_score(original_index: int) -> float:
     if original_index < 0:
         return 0.0
     return 1.0 / (1.0 + original_index)
+
+
+# Number of distinct task queries that saturates query-vote signal.
+QUERY_VOTE_SATURATION = 3
+
+
+def _provenance_entries(doc: dict) -> list[dict]:
+    """Return unique v0.9-B `_search_provenance` entries, preserving order."""
+    prov = doc.get("_search_provenance") if isinstance(doc, dict) else None
+    if not prov:
+        return []
+    out: list[dict] = []
+    for entry in prov:
+        if isinstance(entry, dict) and entry not in out:
+            out.append(entry)
+    return out
+
+
+def _provenance_rank_score(doc: dict) -> float | None:
+    """Best true SearXNG rank from provenance, normalized to [0, 1]."""
+    scores: list[float] = []
+    for entry in _provenance_entries(doc):
+        rank = entry.get("rank")
+        if isinstance(rank, int) and rank > 0:
+            # Provenance rank is 1-based; _position_score takes a 0-based index.
+            scores.append(_position_score(rank - 1))
+    if not scores:
+        return None
+    return max(scores)
+
+
+def _provenance_query_vote(doc: dict) -> float:
+    """Distinct task-query vote from provenance, normalized to [0, 1]."""
+    queries = {
+        q for q in (entry.get("task_query") for entry in _provenance_entries(doc)) if isinstance(q, str) and q
+    }
+    return min(1.0, len(queries) / QUERY_VOTE_SATURATION)
+
+
+def _provenance_search_score(doc: dict) -> float | None:
+    """Combine provenance rank and query-vote signals for v0.9-C1 ranking."""
+    rank_score = _provenance_rank_score(doc)
+    query_vote = _provenance_query_vote(doc)
+    if rank_score is None and query_vote == 0.0:
+        return None
+    if rank_score is None:
+        return query_vote
+    if query_vote == 0.0:
+        return rank_score
+    return 0.5 * rank_score + 0.5 * query_vote
 
 
 def _length_score(text_len: int) -> float:
@@ -133,7 +190,7 @@ def compute_source_score(
         query_terms: pre-computed query terms (list of normalized tokens).
                      If None, no keyword signal is added.
         original_index: 0-based position of this doc in the original
-                        SearXNG hit list (used for position_score).
+                        SearXNG hit list (fallback when provenance is absent).
 
     Returns:
         float in [0, 1]. Higher = better source candidate for top1.
@@ -141,8 +198,7 @@ def compute_source_score(
     Failure modes:
         - doc is None or empty → 0.0
         - doc has error or empty text → 0.0
-        - text < MIN_CONTENT_CHARS → score is just position_score
-          (no content signal possible, but still some signal from rank)
+        - short text is allowed; it just receives a smaller length component
     """
     if not doc:
         return 0.0
@@ -153,8 +209,14 @@ def compute_source_score(
     text_lower = text.lower()
     text_len: int = doc.get("length") or len(text)
 
-    # 1. Position score (cheap; independent of content)
-    pos = _position_score(original_index)
+    # 1. Search signal (v0.9-C1).
+    #    Use `_search_provenance` when available; otherwise fall back to
+    #    the original SearXNG ordinal position. The provenance search
+    #    signal uses only original per-task rank plus query vote; task
+    #    priority is intentionally not a ranking signal in this batch.
+    search = _provenance_search_score(doc)
+    if search is None:
+        search = _position_score(original_index)
 
     # 2. Length score (very cheap; just a number)
     length = _length_score(text_len)
@@ -169,11 +231,11 @@ def compute_source_score(
     content = coverage * (1.0 - 0.5 * noise)
 
     # Final blend:
-    #   - position is prior (0.35) — keep SearXNG's ranking signal
+    #   - search is provenance/position (0.35) — keep search ranking signal
     #   - content is primary (0.45) — keyword coverage with noise penalty
     #   - length is tiebreaker (0.20) — avoid empty/short wins
     # Note: weights sum to 1.0, and each component is in [0, 1].
-    score = 0.35 * pos + 0.45 * content + 0.20 * length
+    score = 0.35 * search + 0.45 * content + 0.20 * length
     return round(max(0.0, min(1.0, score)), 4)
 
 

@@ -1,17 +1,20 @@
 """
-Tests for src/ranking.py — source ranking (v0.8.1.1).
+Tests for src/ranking.py — source ranking (v0.9-C1).
 
 ChatGPT P1 (v0.8.0 review): research_runner used `top1 = iter_documents[0]`,
 which is "the first URL we asked SearXNG for" — not the highest-ranked
 source. Long irrelevant documents could win against short, highly-relevant
 ones simply because of fetch order.
 
-Fix: rank_documents() sorts by combined source_score (position 0.35 +
-content 0.45 + length 0.20) BEFORE selecting top1 or top-N. This module
-tests the ranking logic in isolation (no network, no runner).
+Fix: rank_documents() sorts by combined source_score (provenance/position
+0.35 + content 0.45 + length 0.20) BEFORE selecting top1 or top-N. v0.9-C1
+adds `_search_provenance` as the primary prior, falling back to original
+SearXNG ordinal position for legacy documents. This module tests the ranking
+logic in isolation (no network, no runner).
 
 All tests are offline — pure stdlib, no I/O.
 """
+
 from __future__ import annotations
 
 import sys
@@ -28,6 +31,9 @@ from ranking import (  # noqa: E402
     _length_score,
     _noise_penalty,
     _position_score,
+    _provenance_query_vote,
+    _provenance_rank_score,
+    _provenance_search_score,
     _query_terms,
     compute_source_score,
     rank_documents,
@@ -35,11 +41,113 @@ from ranking import (  # noqa: E402
 )
 
 
-def _doc(url: str, text: str = "x" * 1000, length: int | None = None, error: str | None = None) -> dict:
+def _doc(
+    url: str,
+    text: str = "x" * 1000,
+    length: int | None = None,
+    error: str | None = None,
+    provenance: list[dict] | None = None,
+) -> dict:
     """Build a doc dict the way _fetch_documents does."""
     if length is None:
         length = len(text)
-    return {"url": url, "text": text, "title": "t", "length": length, "error": error}
+    d = {"url": url, "text": text, "title": "t", "length": length, "error": error}
+    if provenance is not None:
+        d["_search_provenance"] = provenance
+    return d
+
+
+# ========================================================================
+# Provenance search tests (v0.9-C1)
+# ========================================================================
+
+
+class TestProvenanceSearchScore:
+    def test_no_provenance_falls_back_to_none(self):
+        assert _provenance_search_score(_doc("https://x.com")) is None
+        assert _provenance_search_score({}) is None
+
+    def test_rank_score_uses_true_one_based_rank(self):
+        d = _doc("https://x.com", provenance=[{"rank": 1, "task_priority": 0}])
+        assert _provenance_rank_score(d) == 1.0
+
+    def test_rank_score_for_second_result(self):
+        d = _doc("https://x.com", provenance=[{"rank": 2, "task_priority": 100}])
+        assert _provenance_rank_score(d) == 0.5
+
+    def test_task_priority_does_not_affect_rank_score(self):
+        high_priority = _doc("https://x.com", provenance=[{"rank": 1, "task_priority": 100}])
+        low_priority = _doc("https://x.com", provenance=[{"rank": 1, "task_priority": 0}])
+        assert _provenance_rank_score(high_priority) == _provenance_rank_score(low_priority)
+
+    def test_best_rank_wins_across_multiple_entries(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 5, "task_query": "q1"},
+                {"rank": 1, "task_query": "q2"},
+            ],
+        )
+        assert _provenance_rank_score(d) == 1.0
+
+    def test_exact_duplicate_provenance_entries_are_ignored(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 5, "task_query": "q1", "task_priority": 100},
+                {"rank": 5, "task_query": "q1", "task_priority": 100},
+            ],
+        )
+        assert _provenance_query_vote(d) == 1 / 3
+
+    def test_provenance_without_rank_or_query_is_unusable(self):
+        d = _doc("https://x.com", provenance=[{"task_query": "q"}])
+        assert _provenance_rank_score(d) is None
+
+    def test_partial_provenance_with_only_rank(self):
+        d = _doc("https://x.com", provenance=[{"rank": 1}])
+        assert _provenance_search_score(d) == 1.0
+
+    def test_partial_provenance_with_only_query_vote(self):
+        d = _doc("https://x.com", provenance=[{"task_query": "q1"}])
+        assert _provenance_search_score(d) == 1 / 3
+
+    def test_query_vote_counts_distinct_task_queries(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 5, "task_query": "q1"},
+                {"rank": 4, "task_query": "q2"},
+            ],
+        )
+        assert _provenance_query_vote(d) == 2 / 3
+
+    def test_query_vote_saturates_at_three_distinct_queries(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 5, "task_query": "q1"},
+                {"rank": 4, "task_query": "q2"},
+                {"rank": 3, "task_query": "q3"},
+                {"rank": 2, "task_query": "q4"},
+            ],
+        )
+        assert _provenance_query_vote(d) == 1.0
+
+    def test_rank_zero_ignored(self):
+        d = _doc("https://x.com", provenance=[{"rank": 0, "task_query": "q1"}])
+        assert _provenance_rank_score(d) is None
+
+    def test_search_score_blends_rank_and_query_vote(self):
+        d = _doc("https://x.com", provenance=[{"rank": 1, "task_query": "q1"}])
+        assert _provenance_search_score(d) == (1.0 + 1 / 3) / 2
+
+    def test_task_priority_is_ignored_by_search_score(self):
+        high_priority = _doc(
+            "https://x.com", provenance=[{"rank": 2, "task_query": "q1", "task_priority": 100}]
+        )
+        low_priority = _doc("https://x.com", provenance=[{"rank": 2, "task_query": "q1", "task_priority": 0}])
+        assert _provenance_search_score(high_priority) == _provenance_search_score(low_priority)
 
 
 # ========================================================================
@@ -145,7 +253,11 @@ class TestComputeSourceScore:
 
     def test_higher_relevance_higher_score(self):
         """A document matching all query terms beats one matching none."""
-        relevant = _doc("https://apple.com", text="apple founded 1976 steve jobs wozniak garage cupertino")  # 60 chars, missing length
+        # 60 chars, missing length; will get length set below.
+        relevant = _doc(
+            "https://apple.com",
+            text="apple founded 1976 steve jobs wozniak garage cupertino",
+        )
         irrelevant = _doc("https://random.com", text="z" * 1000)  # 1000 chars of z
         # Make lengths comparable
         relevant["length"] = len(relevant["text"])
@@ -154,9 +266,7 @@ class TestComputeSourceScore:
         s_irr = compute_source_score(irrelevant, terms, original_index=5)
         # Even though irrelevant is longer, it has 0 keyword coverage.
         # Relevant has high coverage. Relevant should win clearly.
-        assert s_rel > s_irr, (
-            f"relevant={s_rel} should beat irrelevant={s_irr} on coverage"
-        )
+        assert s_rel > s_irr, f"relevant={s_rel} should beat irrelevant={s_irr} on coverage"
 
     def test_position_matters(self):
         """Same content, different position → different score."""
@@ -174,6 +284,48 @@ class TestComputeSourceScore:
         # d1 is longer AND earlier — should win.
         assert s1 > s2
 
+    def test_provenance_beats_position(self):
+        """A doc with weak provenance loses to one with strong provenance."""
+        strong = _doc(
+            "https://strong.com",
+            text="apple news today" * 100,
+            length=1600,
+            provenance=[{"rank": 1, "task_priority": 100}],
+        )
+        weak = _doc(
+            "https://weak.com",
+            text="apple news today" * 100,
+            length=1600,
+            provenance=[{"rank": 10, "task_priority": 40}],
+        )
+        ranked = rank_documents([weak, strong], "apple")
+        assert ranked[0]["url"] == "https://strong.com"
+
+    def test_provenance_beats_content_length_position(self):
+        """Strong provenance can outrank a longer/earlier but weak-provenance doc."""
+        strong = _doc(
+            "https://strong.com",
+            text="apple news today" * 10,  # short
+            length=160,
+            provenance=[{"rank": 1, "task_priority": 100}],
+        )
+        weak = _doc(
+            "https://weak.com",
+            text="apple news today" * 100,  # long
+            length=1600,
+            provenance=[{"rank": 5, "task_priority": 40}],
+        )
+        ranked = rank_documents([weak, strong], "apple")
+        assert ranked[0]["url"] == "https://strong.com"
+
+    def test_fallback_to_position_when_no_provenance(self):
+        """Legacy docs without provenance still use original_index as prior."""
+        d1 = _doc("https://a.com", text="apple news today" * 100, length=1500)
+        d2 = _doc("https://b.com", text="apple news today" * 100, length=1500)
+        s0 = compute_source_score(d1, ["apple"], original_index=0)
+        s1 = compute_source_score(d2, ["apple"], original_index=1)
+        assert s0 > s1
+
 
 # ========================================================================
 # rank_documents — main entry point
@@ -185,7 +337,10 @@ class TestRankDocuments:
         assert rank_documents([]) == []
 
     def test_relevant_doc_beats_irrelevant(self):
-        relevant = _doc("https://apple.com", text="apple steve jobs founded 1976 garage cupertino california" * 10)
+        relevant = _doc(
+            "https://apple.com",
+            text="apple steve jobs founded 1976 garage cupertino california" * 10,
+        )
         irrelevant = _doc("https://random.com", text="random unrelated text content" * 50)
         relevant["length"] = len(relevant["text"])
         irrelevant["length"] = len(irrelevant["text"])
@@ -198,6 +353,17 @@ class TestRankDocuments:
         ranked = rank_documents([d], "apple")
         assert "source_score" in ranked[0]
         assert isinstance(ranked[0]["source_score"], float)
+
+    def test_provenance_attached_preserved(self):
+        """rank_documents must preserve existing `_search_provenance`."""
+        d = _doc(
+            "https://x.com",
+            text="apple news" * 100,
+            length=1000,
+            provenance=[{"rank": 1, "task_priority": 100}],
+        )
+        ranked = rank_documents([d], "apple")
+        assert ranked[0].get("_search_provenance") == [{"rank": 1, "task_priority": 100}]
 
     def test_does_not_mutate_input_order(self):
         """Input list order should be irrelevant — output is sorted."""

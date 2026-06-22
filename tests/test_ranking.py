@@ -138,6 +138,45 @@ class TestProvenanceSearchScore:
         d = _doc("https://x.com", provenance=[{"rank": 0, "task_query": "q1"}])
         assert _provenance_rank_score(d) is None
 
+    def test_bool_rank_true_ignored_and_falls_back_to_position(self):
+        bool_rank = _doc(
+            "https://x.com",
+            text="apple news today" * 100,
+            length=1600,
+            provenance=[{"rank": True, "task_query": "q1"}],
+        )
+        legacy = _doc("https://x.com", text="apple news today" * 100, length=1600)
+        assert _provenance_rank_score(bool_rank) is None
+        assert _provenance_search_score(bool_rank) is None
+        assert compute_source_score(bool_rank, ["apple"], original_index=3) == compute_source_score(
+            legacy, ["apple"], original_index=3
+        )
+
+    def test_bool_rank_false_ignored(self):
+        d = _doc("https://x.com", provenance=[{"rank": False, "task_query": "q1"}])
+        assert _provenance_rank_score(d) is None
+        assert _provenance_search_score(d) is None
+
+    def test_whitespace_only_task_query_gives_zero_vote_bonus(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 1, "task_query": "   "},
+                {"rank": 1, "task_query": "q1"},
+            ],
+        )
+        assert _provenance_query_vote_bonus(d) == 0.0
+
+    def test_task_query_dedupes_after_strip(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 2, "task_query": " q1 "},
+                {"rank": 2, "task_query": "q1"},
+            ],
+        )
+        assert _provenance_query_vote_bonus(d) == 0.0
+
     def test_search_score_rank_one_single_query_stays_one(self):
         d = _doc("https://x.com", provenance=[{"rank": 1, "task_query": "q1"}])
         assert _provenance_search_score(d) == 1.0

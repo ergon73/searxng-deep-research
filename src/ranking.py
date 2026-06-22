@@ -88,7 +88,7 @@ def _provenance_rank_score(doc: dict) -> float | None:
     scores: list[float] = []
     for entry in _provenance_entries(doc):
         rank = entry.get("rank")
-        if isinstance(rank, int) and rank > 0:
+        if type(rank) is int and rank >= 1:
             # Provenance rank is 1-based; _position_score takes a 0-based index.
             scores.append(_position_score(rank - 1))
     if not scores:
@@ -98,9 +98,11 @@ def _provenance_rank_score(doc: dict) -> float | None:
 
 def _provenance_query_vote_bonus(doc: dict) -> float:
     """Small capped bonus from extra distinct task queries in provenance."""
-    queries = {
-        q for q in (entry.get("task_query") for entry in _provenance_entries(doc)) if isinstance(q, str) and q
-    }
+    queries: set[str] = set()
+    for entry in _provenance_entries(doc):
+        query = entry.get("task_query")
+        if isinstance(query, str) and (stripped_query := query.strip()):
+            queries.add(stripped_query)
     return min(QUERY_VOTE_BONUS_MAX, QUERY_VOTE_BONUS_PER_EXTRA_QUERY * max(0, len(queries) - 1))
 
 

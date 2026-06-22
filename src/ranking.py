@@ -12,7 +12,7 @@ or top-N. The score blends four cheap, deterministic signals:
   1. search_score     — v0.9-B `_search_provenance` search signal. If a
                         fetched document carries provenance from one or more
                         SearchTasks, we combine true per-task SearXNG rank
-                        with a query-vote signal. Falls back to
+                        with a small capped query-vote bonus. Falls back to
                         `position_score` for legacy docs that have no
                         provenance.
   2. content_score    — _confidence-like heuristic on the document text:
@@ -65,8 +65,10 @@ def _position_score(original_index: int) -> float:
     return 1.0 / (1.0 + original_index)
 
 
-# Number of distinct task queries that saturates query-vote signal.
-QUERY_VOTE_SATURATION = 3
+# Query-vote bonus: one query gives no bonus; each additional distinct
+# task_query adds 0.10, capped at +0.20. Rank remains the primary search signal.
+QUERY_VOTE_BONUS_PER_EXTRA_QUERY = 0.10
+QUERY_VOTE_BONUS_MAX = 0.20
 
 
 def _provenance_entries(doc: dict) -> list[dict]:
@@ -94,25 +96,21 @@ def _provenance_rank_score(doc: dict) -> float | None:
     return max(scores)
 
 
-def _provenance_query_vote(doc: dict) -> float:
-    """Distinct task-query vote from provenance, normalized to [0, 1]."""
+def _provenance_query_vote_bonus(doc: dict) -> float:
+    """Small capped bonus from extra distinct task queries in provenance."""
     queries = {
         q for q in (entry.get("task_query") for entry in _provenance_entries(doc)) if isinstance(q, str) and q
     }
-    return min(1.0, len(queries) / QUERY_VOTE_SATURATION)
+    return min(QUERY_VOTE_BONUS_MAX, QUERY_VOTE_BONUS_PER_EXTRA_QUERY * max(0, len(queries) - 1))
 
 
 def _provenance_search_score(doc: dict) -> float | None:
     """Combine provenance rank and query-vote signals for v0.9-C1 ranking."""
     rank_score = _provenance_rank_score(doc)
-    query_vote = _provenance_query_vote(doc)
-    if rank_score is None and query_vote == 0.0:
-        return None
     if rank_score is None:
-        return query_vote
-    if query_vote == 0.0:
-        return rank_score
-    return 0.5 * rank_score + 0.5 * query_vote
+        return None
+    query_vote_bonus = _provenance_query_vote_bonus(doc)
+    return min(1.0, rank_score + query_vote_bonus)
 
 
 def _length_score(text_len: int) -> float:
@@ -212,7 +210,8 @@ def compute_source_score(
     # 1. Search signal (v0.9-C1).
     #    Use `_search_provenance` when available; otherwise fall back to
     #    the original SearXNG ordinal position. The provenance search
-    #    signal uses only original per-task rank plus query vote; task
+    #    signal uses only original per-task rank plus a small capped
+    #    query-vote bonus; task
     #    priority is intentionally not a ranking signal in this batch.
     search = _provenance_search_score(doc)
     if search is None:

@@ -31,7 +31,7 @@ from ranking import (  # noqa: E402
     _length_score,
     _noise_penalty,
     _position_score,
-    _provenance_query_vote,
+    _provenance_query_vote_bonus,
     _provenance_rank_score,
     _provenance_search_score,
     _query_terms,
@@ -98,7 +98,7 @@ class TestProvenanceSearchScore:
                 {"rank": 5, "task_query": "q1", "task_priority": 100},
             ],
         )
-        assert _provenance_query_vote(d) == 1 / 3
+        assert _provenance_query_vote_bonus(d) == 0.0
 
     def test_provenance_without_rank_or_query_is_unusable(self):
         d = _doc("https://x.com", provenance=[{"task_query": "q"}])
@@ -108,11 +108,11 @@ class TestProvenanceSearchScore:
         d = _doc("https://x.com", provenance=[{"rank": 1}])
         assert _provenance_search_score(d) == 1.0
 
-    def test_partial_provenance_with_only_query_vote(self):
+    def test_partial_provenance_with_only_query_vote_is_unusable(self):
         d = _doc("https://x.com", provenance=[{"task_query": "q1"}])
-        assert _provenance_search_score(d) == 1 / 3
+        assert _provenance_search_score(d) is None
 
-    def test_query_vote_counts_distinct_task_queries(self):
+    def test_query_vote_bonus_counts_extra_distinct_task_queries(self):
         d = _doc(
             "https://x.com",
             provenance=[
@@ -120,9 +120,9 @@ class TestProvenanceSearchScore:
                 {"rank": 4, "task_query": "q2"},
             ],
         )
-        assert _provenance_query_vote(d) == 2 / 3
+        assert _provenance_query_vote_bonus(d) == 0.10
 
-    def test_query_vote_saturates_at_three_distinct_queries(self):
+    def test_query_vote_bonus_saturates_at_three_distinct_queries(self):
         d = _doc(
             "https://x.com",
             provenance=[
@@ -132,15 +132,27 @@ class TestProvenanceSearchScore:
                 {"rank": 2, "task_query": "q4"},
             ],
         )
-        assert _provenance_query_vote(d) == 1.0
+        assert _provenance_query_vote_bonus(d) == 0.20
 
     def test_rank_zero_ignored(self):
         d = _doc("https://x.com", provenance=[{"rank": 0, "task_query": "q1"}])
         assert _provenance_rank_score(d) is None
 
-    def test_search_score_blends_rank_and_query_vote(self):
+    def test_search_score_rank_one_single_query_stays_one(self):
         d = _doc("https://x.com", provenance=[{"rank": 1, "task_query": "q1"}])
-        assert _provenance_search_score(d) == (1.0 + 1 / 3) / 2
+        assert _provenance_search_score(d) == 1.0
+
+    def test_search_score_adds_small_capped_query_vote_bonus(self):
+        d = _doc(
+            "https://x.com",
+            provenance=[
+                {"rank": 2, "task_query": "q1"},
+                {"rank": 2, "task_query": "q2"},
+                {"rank": 2, "task_query": "q3"},
+                {"rank": 2, "task_query": "q4"},
+            ],
+        )
+        assert _provenance_search_score(d) == 0.7
 
     def test_task_priority_is_ignored_by_search_score(self):
         high_priority = _doc(

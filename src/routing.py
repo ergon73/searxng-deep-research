@@ -56,11 +56,13 @@ ROUTE_PARAMS: dict[str, dict] = {
         # are queried through source-specific variants or connectors instead
         # of polluting every broad release query.
         "engines": "presearch,bing,mojeek",
-        "categories": "general",
         # SearXNG has no 48-hour value. A week avoids losing releases that
         # search indexes expose a day or two late; classification applies the
         # exact 48-hour cutoff later from primary-source evidence.
         "default_time_range": "week",
+        # Do not combine categories with an explicit engine list: SearXNG
+        # treats them as additional selections and broadens the request.
+        "categories": None,
     },
     "forums": {
         "engines": "reddit,stackoverflow,hackernews,github",

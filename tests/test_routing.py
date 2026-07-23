@@ -39,7 +39,7 @@ class TestRouteClassification:
         i = classify_intent("new LLM model releases in the last 48 hours July 2026")
         assert i.route == "llm_release"
         assert i.time_range == "week"
-        assert i.categories == "general"
+        assert i.categories is None
         assert i.engines == "presearch,bing,mojeek"
         assert len(i.query_variants) == 2
         assert any("official announcement" in query for query in i.query_variants)

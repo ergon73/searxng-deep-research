@@ -146,6 +146,18 @@ def build_research_plan(query: str) -> ResearchPlan:
     time_range = intent.time_range
     query_variants = list(intent.query_variants or [])
 
+    if route == "llm_release":
+        # The generic query adapter optimizes ordinary fact questions and can
+        # remove words such as "LLM", "new" and "last 48 hours". Those are
+        # hard constraints for Radar, so keep the raw request and let the
+        # vertical source variants provide breadth instead of generic alts.
+        main_query = query.strip()
+        alt_queries = []
+        adapted_reasons = [
+            reason for reason in adapted_reasons if not str(reason).startswith("dropped_critical_terms:")
+        ]
+        adapted_needs = bool(adapted_reasons)
+
     # 4. Build SearchTasks. Order matters: priority desc, and we want main
     #    first for human-readable display.
     tasks: list[SearchTask] = []

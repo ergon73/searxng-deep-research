@@ -150,12 +150,16 @@ class TestLlmReleaseRoute:
 
         assert plan.intent.route == "llm_release"
         assert plan.intent.routing_warning is False
+        assert plan.needs_confirmation is False
         main = plan.search_tasks[0]
+        assert main.query == "new LLM model releases in the last 48 hours July 2026"
         assert main.time_range == "week"
         assert main.engines == "presearch,bing,mojeek"
         variants = [task for task in plan.search_tasks if task.priority == 70]
         assert len(variants) == 2
         assert all(task.route == "llm_release" for task in variants)
+        assert len(plan.search_tasks) == 3
+        assert not any(task.priority == 80 for task in plan.search_tasks)
 
 
 # ----------------------------------------------------------- security + falsif

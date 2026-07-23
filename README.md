@@ -27,6 +27,7 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 - `AGENTS.md` — project rules and security policy for any coding agent
 - `SECURITY.md` — threat model, hard rules, secret redaction policy
 - `ARCHITECTURE.md` — pipeline diagram and data flow
+- `ROADMAP.md` — v1.0 milestones and the LLM Release Radar proving vertical
 - `.hermes/plans/ISSUES.md` — known gaps, open/closed issues, verification commands (issue-ledger)
 - `INSTALL.md` — how to run the SearXNG + Valkey stack locally
 - `RELEASE_NOTES_v0.8.0.md` — v0.8.0 release notes

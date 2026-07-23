@@ -149,8 +149,11 @@ def test_invalid_or_non_model_payload_is_ignored():
 
 
 class _FakeApiResponse:
-    def __init__(self, payload: list[dict]):
+    def __init__(self, payload: list[dict], *, next_link: str | None = None):
         self.payload = json.dumps(payload).encode()
+        self.headers = {
+            "Link": f'<{next_link}>; rel="next"'
+        } if next_link else {}
 
     def __enter__(self):
         return self
@@ -228,3 +231,69 @@ def test_discovery_isolates_failed_channel():
     assert report.errors[0]["channel"] == "text-generation:createdAt"
     assert report.errors[0]["error"] == "TimeoutError: timed out"
     assert report.unique_signals == 0
+
+
+def test_discovery_paginates_until_window_boundary():
+    recent = _model(
+        "example/recent",
+        created="2026-07-22T10:00:00.000Z",
+        modified="2026-07-22T10:00:00.000Z",
+    )
+    old = _model(
+        "example/old",
+        created="2026-07-20T10:00:00.000Z",
+        modified="2026-07-20T10:00:00.000Z",
+    )
+    calls = 0
+
+    def opener(request, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _FakeApiResponse(
+                [recent],
+                next_link=(
+                    "https://huggingface.co/api/models?"
+                    "pipeline_tag=text-generation&sort=createdAt&cursor=opaque"
+                ),
+            )
+        return _FakeApiResponse([old])
+
+    report = discover_huggingface(
+        since=SINCE,
+        checked_at=datetime(2026, 7, 23, 8, 0, tzinfo=UTC),
+        pipeline_tags=("text-generation",),
+        sorts=("createdAt",),
+        limit_per_channel=1,
+        max_pages_per_channel=5,
+        opener=opener,
+    )
+
+    assert calls == 2
+    assert report.channels[0]["pages"] == 2
+    assert report.channels[0]["truncated"] is False
+    assert report.unique_signals == 1
+
+
+def test_discovery_rejects_cross_host_pagination():
+    recent = _model(
+        "example/recent",
+        created="2026-07-22T10:00:00.000Z",
+        modified="2026-07-22T10:00:00.000Z",
+    )
+
+    report = discover_huggingface(
+        since=SINCE,
+        checked_at=datetime(2026, 7, 23, 8, 0, tzinfo=UTC),
+        pipeline_tags=("text-generation",),
+        sorts=("createdAt",),
+        limit_per_channel=1,
+        opener=lambda *args, **kwargs: _FakeApiResponse(
+            [recent],
+            next_link="https://attacker.example/steal",
+        ),
+    )
+
+    assert report.channels[0]["pages"] == 1
+    assert report.channels[0]["truncated"] is True
+    assert report.errors[0]["error"] == "unsafe pagination URL"

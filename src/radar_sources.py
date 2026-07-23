@@ -9,6 +9,7 @@ confirmed release: release dates still require primary-source verification.
 from __future__ import annotations
 
 import json
+import re
 import ssl
 import urllib.parse
 import urllib.request
@@ -327,20 +328,38 @@ def format_discovery_report(
     return payload
 
 
-def _channel_is_truncated(
+_NEXT_LINK_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+
+
+def _next_page_url(headers: Any) -> str | None:
+    raw_link = headers.get("Link") if hasattr(headers, "get") else None
+    if not isinstance(raw_link, str):
+        return None
+    match = _NEXT_LINK_RE.search(raw_link)
+    return match.group(1) if match else None
+
+
+def _is_safe_huggingface_page(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "huggingface.co"
+        and parsed.port is None
+        and parsed.path == "/api/models"
+    )
+
+
+def _reached_window_boundary(
     payloads: list[dict[str, Any]],
     *,
     sort: str,
     since: datetime,
-    limit: int,
 ) -> bool:
-    if len(payloads) < limit:
-        return False
     field = "createdAt" if sort == "createdAt" else "lastModified"
     timestamps = [
         parsed for payload in payloads if (parsed := _parse_datetime(payload.get(field))) is not None
     ]
-    return bool(timestamps and min(timestamps) >= since)
+    return bool(timestamps and min(timestamps) < since)
 
 
 def discover_huggingface(
@@ -350,6 +369,7 @@ def discover_huggingface(
     pipeline_tags: tuple[str, ...] = DEFAULT_PIPELINE_TAGS,
     sorts: tuple[str, ...] = DEFAULT_SORTS,
     limit_per_channel: int = 100,
+    max_pages_per_channel: int = 5,
     timeout: float = 15.0,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> HuggingFaceDiscoveryReport:
@@ -360,6 +380,8 @@ def discover_huggingface(
     checked_at = (checked_at or datetime.now(UTC)).astimezone(UTC)
     if not 1 <= limit_per_channel <= 500:
         raise ValueError("limit_per_channel must be between 1 and 500")
+    if not 1 <= max_pages_per_channel <= 50:
+        raise ValueError("max_pages_per_channel must be between 1 and 50")
     if not 0 < timeout <= 60:
         raise ValueError("timeout must be greater than 0 and at most 60")
     if not pipeline_tags or any(not tag or len(tag) > 80 for tag in pipeline_tags):
@@ -392,27 +414,43 @@ def discover_huggingface(
                     "User-Agent": HF_USER_AGENT,
                 },
             )
-            try:
-                with opener(request, timeout=timeout, context=context) as response:
-                    decoded = json.loads(response.read())
+            channel_records = 0
+            pages = 0
+            truncated = False
+            next_url: str | None = request.full_url
+            while next_url and pages < max_pages_per_channel:
+                page_request = urllib.request.Request(  # noqa: S310 - validated fixed host
+                    next_url,
+                    headers={
+                        "Accept": "application/json",
+                        "User-Agent": HF_USER_AGENT,
+                    },
+                )
+                try:
+                    with opener(
+                        page_request,
+                        timeout=timeout,
+                        context=context,
+                    ) as response:
+                        decoded = json.loads(response.read())
+                        candidate_next_url = _next_page_url(response.headers)
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "channel": channel,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    break
+
+                pages += 1
                 payloads = (
                     [payload for payload in decoded if isinstance(payload, dict)]
                     if isinstance(decoded, list)
                     else []
                 )
                 fetched_records += len(payloads)
-                channels.append(
-                    {
-                        "channel": channel,
-                        "records": len(payloads),
-                        "truncated": _channel_is_truncated(
-                            payloads,
-                            sort=sort,
-                            since=since,
-                            limit=limit_per_channel,
-                        ),
-                    }
-                )
+                channel_records += len(payloads)
                 for payload in payloads:
                     signal = parse_huggingface_model(payload)
                     if signal is None:
@@ -422,20 +460,35 @@ def discover_huggingface(
                     existing = by_repo.get(signal.repo_id)
                     if existing is None or signal.last_modified >= existing.last_modified:
                         by_repo[signal.repo_id] = signal
-            except Exception as exc:
-                errors.append(
-                    {
-                        "channel": channel,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-                channels.append(
-                    {
-                        "channel": channel,
-                        "records": 0,
-                        "truncated": False,
-                    }
-                )
+
+                if _reached_window_boundary(payloads, sort=sort, since=since):
+                    next_url = None
+                    break
+                if not candidate_next_url:
+                    next_url = None
+                    break
+                if not _is_safe_huggingface_page(candidate_next_url):
+                    errors.append(
+                        {
+                            "channel": channel,
+                            "error": "unsafe pagination URL",
+                        }
+                    )
+                    truncated = True
+                    next_url = None
+                    break
+                next_url = candidate_next_url
+
+            if next_url and pages >= max_pages_per_channel:
+                truncated = True
+            channels.append(
+                {
+                    "channel": channel,
+                    "records": channel_records,
+                    "pages": pages,
+                    "truncated": truncated,
+                }
+            )
 
     signals = tuple(sorted(by_repo.values(), key=lambda signal: signal.repo_id.casefold()))
     candidates = tuple(build_huggingface_candidates(list(signals), since=since))

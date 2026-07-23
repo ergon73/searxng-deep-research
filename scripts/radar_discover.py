@@ -19,6 +19,7 @@ def main() -> int:
         help="Discovery buffer in hours; confirmation applies the exact report window later.",
     )
     parser.add_argument("--limit-per-channel", type=int, default=100)
+    parser.add_argument("--max-pages-per-channel", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--top", type=int, default=50)
     args = parser.parse_args()
@@ -27,6 +28,8 @@ def main() -> int:
         parser.error("--since-hours must be between 1 and 168")
     if not 1 <= args.limit_per_channel <= 500:
         parser.error("--limit-per-channel must be between 1 and 500")
+    if not 1 <= args.max_pages_per_channel <= 50:
+        parser.error("--max-pages-per-channel must be between 1 and 50")
     if not 0 < args.timeout <= 60:
         parser.error("--timeout must be greater than 0 and at most 60")
     if not 1 <= args.top <= 500:
@@ -37,6 +40,7 @@ def main() -> int:
         since=checked_at - timedelta(hours=args.since_hours),
         checked_at=checked_at,
         limit_per_channel=args.limit_per_channel,
+        max_pages_per_channel=args.max_pages_per_channel,
         timeout=args.timeout,
     )
     print(

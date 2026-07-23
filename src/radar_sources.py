@@ -225,25 +225,35 @@ def build_huggingface_candidates(
     signals: list[HuggingFaceModelSignal],
     *,
     since: datetime,
+    until: datetime | None = None,
 ) -> list[HuggingFaceCandidate]:
     """Cluster Hub signals by base-model family and label, never confirm."""
     if since.tzinfo is None:
         since = since.replace(tzinfo=UTC)
     since = since.astimezone(UTC)
+    if until is None:
+        until = datetime.max.replace(tzinfo=UTC)
+    elif until.tzinfo is None:
+        until = until.replace(tzinfo=UTC)
+    until = until.astimezone(UTC)
+    if until < since:
+        raise ValueError("until must not be earlier than since")
 
     grouped: dict[str, list[HuggingFaceModelSignal]] = {}
     for signal in signals:
-        if signal.created_at < since and signal.last_modified < since:
+        created_in_window = since <= signal.created_at <= until
+        modified_in_window = since <= signal.last_modified <= until
+        if not created_in_window and not modified_in_window:
             continue
         grouped.setdefault(signal.family_id, []).append(signal)
 
     candidates: list[HuggingFaceCandidate] = []
     for family_id, family_signals in grouped.items():
         ordered = sorted(family_signals, key=lambda signal: (signal.created_at, signal.repo_id))
-        new_signals = [signal for signal in ordered if signal.created_at >= since]
+        new_signals = [signal for signal in ordered if since <= signal.created_at <= until]
         new_root = sum(not signal.is_derivative for signal in new_signals)
         new_derivatives = sum(signal.is_derivative for signal in new_signals)
-        updated = sum(signal.created_at < since <= signal.last_modified for signal in ordered)
+        updated = sum(signal.created_at < since <= signal.last_modified <= until for signal in ordered)
         state_hint, reasons, base_score = _candidate_state(
             new_root=new_root,
             new_derivatives=new_derivatives,
@@ -262,6 +272,12 @@ def build_huggingface_candidates(
         )
         score = round(min(1.0, base_score + min(0.15, engagement / 1000)), 4)
         encoded_family = quote(family_id, safe="/")
+        event_times = [
+            event_time
+            for signal in ordered
+            for event_time in (signal.created_at, signal.last_modified)
+            if since <= event_time <= until
+        ]
         candidates.append(
             HuggingFaceCandidate(
                 family_id=family_id,
@@ -271,8 +287,8 @@ def build_huggingface_candidates(
                 new_repositories=len(new_signals),
                 updated_repositories=updated,
                 derivative_repositories=new_derivatives,
-                first_signal_at=min(min(signal.created_at, signal.last_modified) for signal in ordered),
-                last_signal_at=max(signal.last_modified for signal in ordered),
+                first_signal_at=min(event_times),
+                last_signal_at=max(event_times),
                 model_url=f"https://huggingface.co/{encoded_family}",
                 model_api_url=f"https://huggingface.co/api/models/{encoded_family}",
                 signals=tuple(ordered),
@@ -465,7 +481,10 @@ def discover_huggingface(
                     signal = parse_huggingface_model(payload)
                     if signal is None:
                         continue
-                    if signal.created_at < since and signal.last_modified < since:
+                    if not (
+                        since <= signal.created_at <= checked_at
+                        or since <= signal.last_modified <= checked_at
+                    ):
                         continue
                     existing = by_repo.get(signal.repo_id)
                     if existing is None or signal.last_modified >= existing.last_modified:
@@ -503,7 +522,13 @@ def discover_huggingface(
             )
 
     signals = tuple(sorted(by_repo.values(), key=lambda signal: signal.repo_id.casefold()))
-    candidates = tuple(build_huggingface_candidates(list(signals), since=since))
+    candidates = tuple(
+        build_huggingface_candidates(
+            list(signals),
+            since=since,
+            until=checked_at,
+        )
+    )
     return HuggingFaceDiscoveryReport(
         since=since,
         checked_at=checked_at,

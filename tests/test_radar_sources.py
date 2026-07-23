@@ -134,6 +134,25 @@ def test_candidate_output_never_claims_confirmed_release():
     assert payload["requires_primary_verification"] is True
 
 
+def test_candidate_builder_excludes_signals_after_as_of():
+    future = parse_huggingface_model(
+        _model(
+            "example/FutureModel",
+            created="2026-07-23T21:00:00.000Z",
+            modified="2026-07-23T21:00:00.000Z",
+        )
+    )
+    assert future is not None
+
+    candidates = build_huggingface_candidates(
+        [future],
+        since=SINCE,
+        until=datetime(2026, 7, 23, 8, 0, tzinfo=UTC),
+    )
+
+    assert candidates == []
+
+
 def test_invalid_or_non_model_payload_is_ignored():
     assert parse_huggingface_model({}) is None
     assert (

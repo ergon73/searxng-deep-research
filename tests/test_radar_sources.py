@@ -231,6 +231,11 @@ def test_discovery_merges_channels_and_reports_update_only():
     assert bounded["candidate_count"] == 2
     assert len(bounded["candidates"]) == 1
     assert bounded["output_truncated"] is True
+    assert bounded["candidates"][0]["signal_count"] >= 1
+    assert "signals" not in bounded["candidates"][0]
+
+    verbose = format_discovery_report(report, top=1, include_signals=True)
+    assert len(verbose["candidates"][0]["signals"]) >= 1
 
 
 def test_discovery_isolates_failed_channel():

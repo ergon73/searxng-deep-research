@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--max-pages-per-channel", type=int, default=20)
     discover.add_argument("--timeout", type=float, default=15.0)
     discover.add_argument("--top", type=int, default=50)
+    discover.add_argument("--include-signals", action="store_true")
     return parser
 
 
@@ -120,7 +121,11 @@ def _run_radar_discover(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         json_envelope(
             command="radar.discover",
             status="error" if all_failed else "degraded" if errors else "ok",
-            data=format_discovery_report(report, top=args.top),
+            data=format_discovery_report(
+                report,
+                top=args.top,
+                include_signals=args.include_signals,
+            ),
             errors=errors,
         ),
         2 if all_failed else 0,

@@ -342,6 +342,7 @@ def format_discovery_report(
     report: HuggingFaceDiscoveryReport,
     *,
     top: int,
+    include_signals: bool = False,
 ) -> dict[str, Any]:
     """Bound user-facing output without hiding source-channel truncation."""
     if not 1 <= top <= 500:
@@ -349,7 +350,13 @@ def format_discovery_report(
     payload = report.to_dict()
     candidates = payload["candidates"]
     payload["candidate_count"] = len(candidates)
-    payload["candidates"] = candidates[:top]
+    selected = candidates[:top]
+    for candidate in selected:
+        signals = candidate.get("signals", [])
+        candidate["signal_count"] = len(signals)
+        if not include_signals:
+            candidate.pop("signals", None)
+    payload["candidates"] = selected
     payload["output_truncated"] = len(candidates) > top
     return payload
 

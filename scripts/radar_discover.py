@@ -22,6 +22,7 @@ def main() -> int:
     parser.add_argument("--max-pages-per-channel", type=int, default=20)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--top", type=int, default=50)
+    parser.add_argument("--include-signals", action="store_true")
     args = parser.parse_args()
 
     if not 1 <= args.since_hours <= 168:
@@ -45,7 +46,11 @@ def main() -> int:
     )
     print(
         json.dumps(
-            format_discovery_report(report, top=args.top),
+            format_discovery_report(
+                report,
+                top=args.top,
+                include_signals=args.include_signals,
+            ),
             ensure_ascii=False,
             indent=2,
             sort_keys=True,

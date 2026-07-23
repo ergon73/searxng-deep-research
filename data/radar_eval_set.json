@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "vertical": "llm_release_radar",
+  "description": "Frozen July 2026 release and hard-negative cases for retrieval and release-status evaluation.",
+  "window": {
+    "as_of": "2026-07-23T08:00:00Z",
+    "fresh_hours": 48,
+    "discovery_buffer_hours": 72
+  },
+  "cases": [
+    {
+      "id": "gemini-3-6-flash",
+      "family": "Gemini 3.6 Flash",
+      "aliases": [
+        "google/gemini-3.6-flash",
+        "gemini-3.6-flash"
+      ],
+      "discovery_queries": [
+        "Gemini 3.6 Flash release",
+        "new Google Gemini model July 2026"
+      ],
+      "expected": {
+        "status": "release",
+        "freshness": "fresh",
+        "release_date": "2026-07-21",
+        "availability": [
+          "api"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/",
+          "kind": "official_announcement",
+          "supports": "Official Google announcement dated 2026-07-21 says Gemini 3.6 Flash is available starting that day."
+        },
+        {
+          "url": "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash",
+          "kind": "official_model_page",
+          "supports": "Official Gemini API model documentation."
+        }
+      ]
+    },
+    {
+      "id": "gemini-3-5-flash-lite",
+      "family": "Gemini 3.5 Flash-Lite",
+      "aliases": [
+        "google/gemini-3.5-flash-lite",
+        "gemini-3.5-flash-lite"
+      ],
+      "discovery_queries": [
+        "Gemini 3.5 Flash-Lite release",
+        "Google Flash-Lite July 2026"
+      ],
+      "expected": {
+        "status": "release",
+        "freshness": "fresh",
+        "release_date": "2026-07-21",
+        "availability": [
+          "api"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/",
+          "kind": "official_announcement",
+          "supports": "Official Google announcement dated 2026-07-21 says Gemini 3.5 Flash-Lite is available starting that day."
+        }
+      ]
+    },
+    {
+      "id": "laguna-s-2-1",
+      "family": "Laguna S 2.1",
+      "aliases": [
+        "poolside/Laguna-S-2.1",
+        "Laguna-S-2.1"
+      ],
+      "discovery_queries": [
+        "Laguna S 2.1 release",
+        "Poolside new coding model July 2026"
+      ],
+      "expected": {
+        "status": "release",
+        "freshness": "fresh",
+        "release_date": "2026-07-21",
+        "availability": [
+          "open_weights",
+          "api"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://poolside.ai/blog/introducing-laguna-s-2-1",
+          "kind": "official_announcement",
+          "supports": "Poolside release timeline dates Laguna S 2.1 to 2026-07-21."
+        },
+        {
+          "url": "https://huggingface.co/poolside/Laguna-S-2.1",
+          "kind": "official_model_page",
+          "supports": "Official model card documents 118B total, about 8B active parameters and model availability."
+        },
+        {
+          "url": "https://huggingface.co/api/models/poolside/Laguna-S-2.1",
+          "kind": "official_model_api",
+          "supports": "Official Hugging Face model metadata; repository creation predates the release announcement and is discovery evidence only."
+        }
+      ]
+    },
+    {
+      "id": "antares-security-slm",
+      "family": "Antares",
+      "aliases": [
+        "fdtn-ai/antares-350m",
+        "fdtn-ai/antares-1b"
+      ],
+      "discovery_queries": [
+        "Cisco Antares 350M 1B release",
+        "new local security language model July 2026"
+      ],
+      "expected": {
+        "status": "limited_release",
+        "freshness": "fresh",
+        "release_date": "2026-07-21",
+        "availability": [
+          "gated_open_weights"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://blogs.cisco.com/ai/introducing-antares-the-most-efficient-open-weight-ai-models-for-vulnerability-localization",
+          "kind": "official_announcement",
+          "supports": "Cisco announcement dated 2026-07-21 releases Antares-350M and Antares-1B."
+        },
+        {
+          "url": "https://huggingface.co/collections/fdtn-ai/antares",
+          "kind": "official_model_page",
+          "supports": "Official collection contains the Antares-350M and Antares-1B repositories."
+        },
+        {
+          "url": "https://huggingface.co/api/models/fdtn-ai/antares-350m",
+          "kind": "official_model_api",
+          "supports": "Official metadata records repository creation on 2026-07-21 and gated access."
+        }
+      ]
+    },
+    {
+      "id": "gemini-3-5-flash-cyber",
+      "family": "Gemini 3.5 Flash Cyber",
+      "aliases": [
+        "gemini-3.5-flash-cyber"
+      ],
+      "discovery_queries": [
+        "Gemini 3.5 Flash Cyber availability"
+      ],
+      "expected": {
+        "status": "preview",
+        "freshness": "fresh",
+        "release_date": null,
+        "availability": [
+          "future_limited_pilot"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/",
+          "kind": "official_announcement",
+          "supports": "Google says availability will be limited to governments and trusted partners in a future pilot; no public release is claimed."
+        }
+      ]
+    },
+    {
+      "id": "longcat-2-0-stale",
+      "family": "LongCat-2.0",
+      "aliases": [
+        "meituan-longcat/LongCat-2.0",
+        "meituan/longcat-2.0"
+      ],
+      "discovery_queries": [
+        "LongCat-2.0 release date"
+      ],
+      "expected": {
+        "status": "not_release_in_window",
+        "freshness": "outside_window",
+        "release_date": "2026-06-30",
+        "availability": [
+          "open_weights",
+          "api"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://longcat.chat/blog/longcat-2.0/",
+          "kind": "official_announcement",
+          "supports": "The official LongCat announcement is dated 2026-06-30, outside the evaluation window."
+        },
+        {
+          "url": "https://huggingface.co/meituan-longcat/LongCat-2.0",
+          "kind": "official_model_page",
+          "supports": "Official model repository; catalog appearance must not override the announcement date."
+        }
+      ]
+    },
+    {
+      "id": "diffusion-gemma-asr-update",
+      "family": "diffusion-gemma-asr-small",
+      "aliases": [
+        "interfaze-ai/diffusion-gemma-asr-small"
+      ],
+      "discovery_queries": [
+        "diffusion gemma ASR small release date"
+      ],
+      "expected": {
+        "status": "not_release_in_window",
+        "freshness": "outside_window",
+        "release_date": "2026-06-26",
+        "availability": [
+          "adapter_weights"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://huggingface.co/api/models/interfaze-ai/diffusion-gemma-asr-small",
+          "kind": "official_model_api",
+          "supports": "The repository was created on 2026-06-26 and updated on 2026-07-22; a fresh update is not proof of a fresh release."
+        },
+        {
+          "url": "https://arxiv.org/abs/2607.13013",
+          "kind": "paper",
+          "supports": "The associated paper was submitted on 2026-07-14, outside the 48-hour release window."
+        }
+      ]
+    },
+    {
+      "id": "qwen3-asr-stale",
+      "family": "Qwen3-ASR",
+      "aliases": [
+        "Qwen/Qwen3-ASR-1.7B",
+        "Qwen/Qwen3-ASR-0.6B",
+        "Qwen/Qwen3-ForcedAligner-0.6B"
+      ],
+      "discovery_queries": [
+        "Qwen3 ASR 1.7B new release"
+      ],
+      "expected": {
+        "status": "not_release_in_window",
+        "freshness": "outside_window",
+        "release_date": "2026-01-28",
+        "availability": [
+          "open_weights"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://huggingface.co/api/models/Qwen/Qwen3-ASR-1.7B",
+          "kind": "official_model_api",
+          "supports": "Official metadata records creation on 2026-01-28."
+        },
+        {
+          "url": "https://huggingface.co/api/models/Qwen/Qwen3-ASR-0.6B",
+          "kind": "official_model_api",
+          "supports": "Official metadata records creation on 2026-01-28."
+        }
+      ]
+    },
+    {
+      "id": "longcat-flash-omni-stale",
+      "family": "LongCat-Flash-Omni",
+      "aliases": [
+        "meituan-longcat/LongCat-Flash-Omni"
+      ],
+      "discovery_queries": [
+        "LongCat Flash Omni new release"
+      ],
+      "expected": {
+        "status": "not_release_in_window",
+        "freshness": "outside_window",
+        "release_date": "2025-10-24",
+        "availability": [
+          "repository"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://api.github.com/repos/meituan-longcat/LongCat-Flash-Omni",
+          "kind": "official_repository_api",
+          "supports": "The official repository was created on 2025-10-24 and last pushed on 2026-05-09."
+        }
+      ]
+    },
+    {
+      "id": "longcat-audiodit-stale",
+      "family": "LongCat-AudioDiT-3.5B",
+      "aliases": [
+        "meituan-longcat/LongCat-AudioDiT-3.5B"
+      ],
+      "discovery_queries": [
+        "LongCat AudioDiT 3.5B new model"
+      ],
+      "expected": {
+        "status": "not_release_in_window",
+        "freshness": "outside_window",
+        "release_date": "2026-03-30",
+        "availability": [
+          "open_weights"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://huggingface.co/api/models/meituan-longcat/LongCat-AudioDiT-3.5B",
+          "kind": "official_model_api",
+          "supports": "Official metadata records creation on 2026-03-30 and last modification on 2026-04-03."
+        }
+      ]
+    },
+    {
+      "id": "nemotron-embed-vl-stale",
+      "family": "Llama Nemotron Embed VL 1B v2",
+      "aliases": [
+        "nvidia/llama-nemotron-embed-vl-1b-v2"
+      ],
+      "discovery_queries": [
+        "llama nemotron embed vl 1b v2 release"
+      ],
+      "expected": {
+        "status": "not_release_in_window",
+        "freshness": "outside_window",
+        "release_date": "2025-12-03",
+        "availability": [
+          "open_weights"
+        ]
+      },
+      "primary_sources": [
+        {
+          "url": "https://huggingface.co/api/models/nvidia/llama-nemotron-embed-vl-1b-v2",
+          "kind": "official_model_api",
+          "supports": "Official metadata records repository creation on 2025-12-03; later catalog activity is not a new release."
+        }
+      ]
+    }
+  ]
+}

@@ -2,9 +2,10 @@
 
 Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check.
 
-**Version:** v0.8.4
-**Status:** hardening release. See `.hermes/plans/ISSUES.md` and `SECURITY.md` for current state.
-**Recommended entrypoint:** `src/research_runner.py::run_research()` / `deep_research_v2()`.
+**Version:** v0.9.0b1
+**Status:** Radar beta with measured SearXNG and Hugging Face discovery.
+**Recommended entrypoint:** installed `searxng-research` CLI.
+**Python API:** `src/research_runner.py::run_research()` / `deep_research_v2()`.
 **Legacy entrypoint:** `src/hermes_deepresearch.py::deep_research()` (untouched, still works).
 
 ## What this is
@@ -37,6 +38,15 @@ Local SearXNG-based research fetcher with 4-level fact verification and optional
 ## Quick start (for review)
 
 ```bash
+# Install the versioned CLI
+python3 -m pip install .
+
+# Source-native Radar discovery (JSON schema v1)
+searxng-research radar discover --since-hours 72 --top 50
+
+# Generic evidence-first research (may request plan confirmation)
+searxng-research research "new LLM releases in the last 48 hours"
+
 # Tests (offline, no LLM calls)
 PYTHONPATH=src python3 -m pytest
 

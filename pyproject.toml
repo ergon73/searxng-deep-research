@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "searxng-deep-research"
-version = "0.8.4"
-description = "Local SearXNG-based research fetcher with 4-level fact verification and optional LLM cross-check"
+version = "0.9.0b1"
+description = "Private evidence-first research gateway with an LLM Release Radar"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -27,6 +27,33 @@ dev = [
 
 [project.urls]
 "Source" = "https://github.com/ergon73/searxng-deep-research"
+
+[project.scripts]
+searxng-research = "cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = [
+    "citations",
+    "cli",
+    "critical_review",
+    "evidence",
+    "gap_analysis",
+    "hermes_deepresearch",
+    "hermes_searxng",
+    "llm_verifier",
+    "models",
+    "planner",
+    "query_adaptation",
+    "radar_source_eval",
+    "radar_sources",
+    "ranking",
+    "redact",
+    "release_packaging",
+    "research_runner",
+    "routing",
+    "synthesis",
+]
 
 # === Ruff config ===
 [tool.ruff]

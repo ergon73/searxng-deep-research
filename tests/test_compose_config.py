@@ -118,6 +118,37 @@ class TestSettingsYml:
         formats = settings.get("search", {}).get("formats", [])
         assert "json" in formats, f"search.formats must include 'json' for deep_research, got: {formats}"
 
+    def test_brand_uses_current_searxng_schema(self, settings):
+        """Legacy branding keys make current SearXNG reject settings.yml."""
+        brand = settings.get("brand", {})
+        removed_keys = {"new_name", "private_instance"} & set(brand)
+        assert not removed_keys, (
+            "settings.yml contains branding keys rejected by current SearXNG: "
+            f"{sorted(removed_keys)}"
+        )
+
+    def test_engines_reuse_current_searxng_definitions(self, settings):
+        """Curated engines should inherit module names and shortcuts upstream."""
+        defaults = settings.get("use_default_settings")
+        assert isinstance(defaults, dict), (
+            "use_default_settings must use the mapping form with engines.keep_only"
+        )
+        keep_only = defaults.get("engines", {}).get("keep_only", [])
+        assert keep_only, "use_default_settings.engines.keep_only must not be empty"
+
+        overrides = settings.get("engines", [])
+        assert {item["name"] for item in overrides} <= set(keep_only)
+        forbidden_override_keys = {"engine", "shortcut"}
+        offenders = [
+            item["name"]
+            for item in overrides
+            if forbidden_override_keys & set(item)
+        ]
+        assert not offenders, (
+            "engine module names and shortcuts must come from current SearXNG "
+            f"defaults; stale overrides found for: {offenders}"
+        )
+
 
 # --- .env_llm ---
 #

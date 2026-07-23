@@ -1,20 +1,27 @@
-# SearXNG settings.yml — HYBRID configuration
-# Verified score 553.4 on benchmark, beats BASELINE (537.6) and TUNED (550.0)
-# See ARCHITECTURE.md for full decision log
-# This is the actual config we run, not a stub
-
-# Использовать встроенные defaults SearXNG, плюс наши overrides
-use_default_settings: true
+# SearXNG settings.yml — curated local configuration.
+# Reuse engine definitions from the installed SearXNG release so module names,
+# shortcuts and required engine fields stay compatible across image updates.
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - duckduckgo news
+      - brave
+      - mojeek
+      - presearch
+      - wikidata
+      - bing
+      - wikipedia
+      - arxiv
+      - github
+      - stackoverflow
+      - semantic scholar
 
 general:
   debug: false
   instance_name: "hermes-local"
   contact_url: ""
   enable_metrics: false
-
-brand:
-  new_name: "Hermes Search"
-  private_instance: true
 
 search:
   safe_search: 0
@@ -49,83 +56,52 @@ outgoing:
 
 engines:
   - name: duckduckgo
-    engine: duckduckgo
     disabled: false
-    shortcut: ddg
     timeout: 5.0
 
   - name: duckduckgo news
-    engine: duckduckgo_news
     disabled: false
-    shortcut: ddgn
-    timeout: 5.0
-
-  - name: duckduckgo definitions
-    engine: duckduckgo_definitions
-    disabled: false
-    shortcut: ddd
     timeout: 5.0
 
   - name: brave
-    engine: brave
     disabled: false
-    shortcut: br
     timeout: 6.0
-    # NOTE: brave is rate-limited upstream; "Suspended: too many requests" periodically
-    # Wait 5-10 min between heavy usage, or leave disabled.
 
   - name: mojeek
-    engine: mojeek
     disabled: false
-    shortcut: mj
     timeout: 5.0
 
   - name: presearch
-    engine: presearch
     disabled: false
-    shortcut: ps
     timeout: 5.0
 
   - name: wikidata
-    engine: wikidata
     disabled: false
-    shortcut: wd
     timeout: 5.0
 
   - name: bing
-    engine: bing
     disabled: false
-    shortcut: bi
     timeout: 6.0
 
   - name: wikipedia
-    engine: wikipedia
     disabled: false
-    shortcut: wp
     timeout: 4.0
+    display_type: ["infobox", "list"]
 
   - name: arxiv
-    engine: arxiv
-    disabled: true
-    shortcut: arx
+    disabled: false
     timeout: 6.0
 
   - name: github
-    engine: github
     disabled: false
-    shortcut: gh
     timeout: 5.0
 
   - name: stackoverflow
-    engine: stackoverflow
     disabled: false
-    shortcut: stex
     timeout: 5.0
 
   - name: semantic scholar
-    engine: semantic_scholar
     disabled: false
-    shortcut: ss
     timeout: 6.0
 
 # limiter disabled (this is single-user)

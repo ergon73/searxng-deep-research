@@ -47,6 +47,33 @@ PYTHONPATH=src python3 scripts/e2e_falcon9.py
 PYTHONPATH=src python3 scripts/eval.py
 ```
 
+## LLM Release Radar (work in progress)
+
+The Radar uses independent discovery channels instead of treating one search
+index as complete. The first source-native connector reads bounded,
+unauthenticated Hugging Face API streams:
+
+```bash
+PYTHONPATH=src python3 scripts/radar_discover.py \
+  --since-hours 72 \
+  --limit-per-channel 100 \
+  --top 50
+```
+
+The output distinguishes:
+
+- `new_root_repository` — a root repository was created in the window;
+- `derivative_burst` — multiple new ports or quantizations point to one base
+  model;
+- `derivative_signal` — a single derivative points to a base model;
+- `update_only` — an older repository was modified in the window.
+
+All four are **discovery hints**, not confirmed releases.
+`requires_primary_verification` remains true until an official announcement or
+equivalent primary evidence establishes the release and availability date.
+Every API channel reports request counts, errors and whether its bounded result
+set was truncated.
+
 ## Privacy
 
 This is a **public repository**. It contains a development snapshot of

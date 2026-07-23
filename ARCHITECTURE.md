@@ -44,6 +44,30 @@ Review snapshot: `DR-05062026.txt` (in `.gitignore`, kept locally — not in rep
 ## 1. High-level data flow
 
 ```
+
+### Radar source-native discovery
+
+The LLM Release Radar adds a discovery layer before the generic research flow:
+
+```text
+bounded source channel
+  -> repository event signal
+  -> base-model family cluster
+  -> candidate state hint
+  -> primary-source verification
+  -> exact 48-hour release classification
+```
+
+`src/radar_sources.py` currently implements Hugging Face Hub discovery through
+fixed HTTPS API channels sorted by creation and modification time. It clusters
+derivative repositories through `base_model` metadata, so a burst of GGUF,
+MLX or other ports can lead the verifier back to the original family.
+
+Repository creation, modification and derivative activity are never treated
+as proof of a release date. Each candidate is emitted with
+`requires_primary_verification=true`. The connector is bounded per channel and
+reports both channel truncation and isolated failures; downstream consumers
+must not describe a truncated run as exhaustive.
 User query (RU/EN)
   │
   ▼

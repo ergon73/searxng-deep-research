@@ -337,6 +337,61 @@ class TestDispatchSearchTask:
         assert hits[0]["_search_provenance"][0]["task_query"] == "previous"
         assert hits[0]["_search_provenance"][1]["task_query"] == "continuity"
 
+    def test_dispatch_records_actual_engine_health(self, monkeypatch):
+        """The runner keeps actual responders and failures, not only requested engines."""
+        from hermes_searxng import SearchResponse
+        from research_runner import _dispatch_search_task_with_event
+
+        def stub(query, **kwargs):
+            return SearchResponse(
+                query=query,
+                hits=[
+                    {
+                        **_make_hit("https://example.com/x"),
+                        "engine": "bing",
+                        "engines": ["bing", "mojeek"],
+                    }
+                ],
+                responding_engines=("bing", "mojeek"),
+                unresponsive_engines=("duckduckgo: CAPTCHA",),
+                elapsed_sec=0.25,
+            )
+
+        monkeypatch.setattr("research_runner.web_search", stub)
+        task = SearchTask(query="release", route="news", engines="bing,duckduckgo")
+
+        hits, event = _dispatch_search_task_with_event(task)
+
+        assert len(hits) == 1
+        assert event["requested_engines"] == "bing,duckduckgo"
+        assert event["responding_engines"] == ["bing", "mojeek"]
+        assert event["unresponsive_engines"] == ["duckduckgo: CAPTCHA"]
+        assert event["result_count"] == 1
+        assert event["degraded"] is True
+        assert event["error"] is None
+
+    def test_zero_results_still_produce_search_event(self, monkeypatch):
+        """Search telemetry cannot depend on there being a hit to attach it to."""
+        from hermes_searxng import SearchResponse
+        from research_runner import _dispatch_search_task_with_event
+
+        monkeypatch.setattr(
+            "research_runner.web_search",
+            lambda query, **kwargs: SearchResponse(
+                query=query,
+                hits=[],
+                error="TimeoutError: timed out",
+                elapsed_sec=1.0,
+            ),
+        )
+
+        hits, event = _dispatch_search_task_with_event(SearchTask(query="missing"))
+
+        assert hits == []
+        assert event["result_count"] == 0
+        assert event["degraded"] is True
+        assert event["error"] == "TimeoutError: timed out"
+
 
 # -------------------------------------------------------- _fetch_documents
 

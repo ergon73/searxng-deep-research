@@ -66,6 +66,7 @@ from hermes_deepresearch import (
     verify_sources,
     web_search,
 )
+from hermes_searxng import SearchResponse
 
 # Local imports (typed state + planner)
 from models import Claim, ResearchState, SearchTask
@@ -168,9 +169,22 @@ def _dispatch_search_task(task: SearchTask, *, max_results: int = 5) -> list[dic
     the task that produced it (query, route, engines, categories, time_range,
     priority, rationale, and original 1-based rank).
     """
+    hits, _event = _dispatch_search_task_with_event(task, max_results=max_results)
+    return hits
+
+
+def _dispatch_search_task_with_event(
+    task: SearchTask,
+    *,
+    max_results: int = 5,
+) -> tuple[list[dict], dict[str, Any]]:
+    """Dispatch a task and retain actual SearXNG engine-health metadata."""
     # Build kwargs without None values — web_search signature has
     # explicit `lang: str = "ru"` and may not accept None.
-    kwargs: dict[str, Any] = {"max_results": max_results}
+    kwargs: dict[str, Any] = {
+        "max_results": max_results,
+        "include_metadata": True,
+    }
     if task.language and task.language != "auto":
         kwargs["lang"] = task.language
     if task.time_range is not None:
@@ -179,8 +193,47 @@ def _dispatch_search_task(task: SearchTask, *, max_results: int = 5) -> list[dic
         kwargs["engines"] = task.engines
     if task.categories is not None:
         kwargs["categories"] = task.categories
-    raw_hits = web_search(task.query, **kwargs)
-    return _attach_provenance(raw_hits, task)
+    raw_response = web_search(task.query, **kwargs)
+    if isinstance(raw_response, SearchResponse):
+        raw_hits = raw_response.hits
+        responding_engines = list(raw_response.responding_engines)
+        unresponsive_engines = list(raw_response.unresponsive_engines)
+        error = raw_response.error
+        elapsed_sec = raw_response.elapsed_sec
+        degraded = raw_response.degraded
+    else:
+        # Test doubles and older integrations may still return the legacy list.
+        raw_hits = raw_response
+        responding_engines = sorted(
+            {
+                engine
+                for hit in raw_hits
+                for engine in (
+                    hit.get("engines") if isinstance(hit.get("engines"), list) else [hit.get("engine")]
+                )
+                if isinstance(engine, str) and engine
+            }
+        )
+        unresponsive_engines = []
+        error = None
+        elapsed_sec = None
+        degraded = not raw_hits
+
+    hits = _attach_provenance(raw_hits, task)
+    event = {
+        "task_query": task.query,
+        "task_route": task.route,
+        "requested_engines": task.engines,
+        "requested_categories": task.categories,
+        "time_range": task.time_range,
+        "result_count": len(hits),
+        "responding_engines": responding_engines,
+        "unresponsive_engines": unresponsive_engines,
+        "degraded": degraded,
+        "error": error,
+        "elapsed_sec": elapsed_sec,
+    }
+    return hits, event
 
 
 def _task_key(task: SearchTask) -> tuple:
@@ -663,7 +716,11 @@ def run_research(
             # 4a. Search + fetch for each (new) task only
             iteration_hits: list[dict] = []
             for task in current_tasks:
-                hits = _dispatch_search_task(task, max_results=top_n * 2)
+                hits, search_event = _dispatch_search_task_with_event(
+                    task,
+                    max_results=top_n * 2,
+                )
+                state.search_events.append(search_event)
                 for h in hits:
                     h["_task_priority"] = task.priority
                     h["_task_rationale"] = task.rationale

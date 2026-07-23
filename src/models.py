@@ -113,6 +113,7 @@ class ResearchState:
     original_query: str
     adapted: dict[str, Any] | None = None  # output of adapt_query()
     search_tasks: list[SearchTask] = field(default_factory=list)
+    search_events: list[dict[str, Any]] = field(default_factory=list)
     search_hits: list[dict[str, Any]] = field(default_factory=list)  # legacy dict shape
     documents: list[dict[str, Any]] = field(default_factory=list)  # legacy dict shape
     claims: list[Claim] = field(default_factory=list)
@@ -130,6 +131,7 @@ class ResearchState:
             "original_query": self.original_query,
             "adapted": self.adapted,
             "search_tasks": [t.to_dict() for t in self.search_tasks],
+            "search_events": self.search_events,
             "search_hits": self.search_hits,
             "documents": self.documents,
             "claims": [c.to_dict() for c in self.claims],

@@ -69,6 +69,20 @@ class TestSearchTask:
         }
 
 
+def test_research_state_serializes_search_events():
+    state = ResearchState(original_query="radar")
+    state.search_events.append(
+        {
+            "task_query": "new model release",
+            "responding_engines": ["bing"],
+            "unresponsive_engines": ["duckduckgo: CAPTCHA"],
+            "degraded": True,
+        }
+    )
+
+    assert state.to_dict()["search_events"] == state.search_events
+
+
 # ----------------------------------------------------------------------- Claim
 
 
@@ -190,6 +204,7 @@ class TestResearchState:
             "original_query": "q",
             "adapted": None,
             "search_tasks": [],
+            "search_events": [],
             "search_hits": [],
             "documents": [],
             "claims": [],

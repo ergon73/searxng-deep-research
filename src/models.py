@@ -27,8 +27,9 @@ from typing import Any
 from evidence import EvidenceWindow
 
 # Route values intentionally mirror `routing.py` Intent.route vocabulary
-# (general, news, forums, docs, academic, github, reviews, security, product,
-# technical, wiki). Kept as plain str (not Literal) so legacy callers can pass
+# (general, news, llm_release, forums, docs, academic, github, reviews,
+# security, product, technical, wiki). Kept as plain str (not Literal) so
+# legacy callers can pass
 # any value without breaking — strict enum checks happen elsewhere.
 Route = str
 

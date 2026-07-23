@@ -51,6 +51,17 @@ ROUTE_PARAMS: dict[str, dict] = {
         # типа "Apple CEO 2024" (нужны статьи за 2024, не за последние 24 часа).
         "default_time_range": "month",
     },
+    "llm_release": {
+        # Radar discovery needs general web indexes. Scientific/code engines
+        # are queried through source-specific variants or connectors instead
+        # of polluting every broad release query.
+        "engines": "presearch,bing,mojeek",
+        "categories": "general",
+        # SearXNG has no 48-hour value. A week avoids losing releases that
+        # search indexes expose a day or two late; classification applies the
+        # exact 48-hour cutoff later from primary-source evidence.
+        "default_time_range": "week",
+    },
     "forums": {
         "engines": "reddit,stackoverflow,hackernews,github",
         "categories": None,
@@ -143,6 +154,13 @@ _NEWS_PATTERNS = [
     r"\bпредстав[а-яё]*\b",  # "запущен", "релиз", "анонсирован"
     r"\bcurrent\b",
     r"\bтекущ[аио]?\b",
+]
+
+_LLM_RELEASE_PATTERNS = [
+    r"\b(?:new|latest|released?|launch(?:ed)?|upcoming)\b.{0,50}\b(?:llms?|language models?|foundation models?)\b",
+    r"\b(?:llms?|language models?|foundation models?)\b.{0,50}\b(?:released?|releases?|launch(?:ed)?|announcement)\b",
+    r"\b(?:нов(?:ая|ые|ый)|свеж(?:ая|ие|ий)|вышедш(?:ая|ие|ий))\b.{0,50}\b(?:llm|языков(?:ая|ые|ой) модел[ьи])\b",
+    r"\b(?:llm|языков(?:ая|ые|ой) модел[ьи])\b.{0,50}\b(?:релиз|вышл[аи]?|выпущен[аы]?|анонс)\b",
 ]
 
 _FORUMS_PATTERNS = [
@@ -336,6 +354,8 @@ _PRODUCT_PATTERNS = [
 
 
 _CLASSIFIERS: list[tuple[str, list[str]]] = [
+    # Vertical-specific, high-signal route must win over generic news/technical.
+    ("llm_release", _LLM_RELEASE_PATTERNS),
     ("security", _SECURITY_PATTERNS),
     ("academic", _ACADEMIC_PATTERNS),
     ("github", _GITHUB_PATTERNS),
@@ -403,7 +423,15 @@ _RECENCY_TIME_RANGES = {
     # Words that suggest very recent (last day)
     "day": [r"\btoday\b", r"\bсегодня\b", r"\bвчера\b", r"\byesterday\b", r"\bbreaking\b", r"\bтолько что\b"],
     # Last week
-    "week": [r"\bthis week\b", r"\bна этой неделе\b", r"\bнедавн[ио]\b"],
+    "week": [
+        r"\bthis week\b",
+        r"\bна этой неделе\b",
+        r"\bнедавн[ио]\b",
+        r"\blast\s+48\s+hours?\b",
+        r"\bpast\s+48\s+hours?\b",
+        r"\bпоследн(?:ие|их)\s+48\s+час",
+        r"\bза\s+последн(?:ие|их)\s+48\s+час",
+    ],
     # Last month
     "month": [r"\bthis month\b", r"\bв этом месяце\b"],
     # Last year
@@ -467,6 +495,14 @@ def _docs_query_variants(query: str) -> list[str]:
     ]
 
 
+def _llm_release_query_variants(query: str) -> list[str]:
+    """Split release discovery into announcement and open-weight channels."""
+    return [
+        f"{query} official announcement",
+        f"{query} open weights Hugging Face GitHub",
+    ]
+
+
 # ====================================================================
 # Public API
 # ====================================================================
@@ -477,8 +513,8 @@ class Intent:
     """Classified user intent with routing recommendations.
 
     Fields:
-        route: primary route name (general, news, forums, docs, academic,
-               github, reviews, security, product)
+        route: primary route name (general, news, llm_release, forums, docs,
+               academic, github, reviews, security, product)
         confidence: 0.0-1.0; how confident the classifier is
         engines: suggested SearXNG engines (comma-separated) or None
         categories: suggested SearXNG categories or None
@@ -548,6 +584,10 @@ def classify_intent(query: str) -> Intent:
     # Recency override: if query has explicit recency words, use those
     # over the route's default.
     inferred_tr = _detect_recency(query)
+    if route == "llm_release" and inferred_tr == "year":
+        # A calendar year in a Radar query describes the current window; it
+        # must not expand a last-48-hour search to a whole year.
+        inferred_tr = None
     time_range = inferred_tr or default_tr
 
     # Route-specific query variants
@@ -560,6 +600,8 @@ def classify_intent(query: str) -> Intent:
         variants = _forum_query_variants(query)
     elif route == "docs":
         variants = _docs_query_variants(query)
+    elif route == "llm_release":
+        variants = _llm_release_query_variants(query)
 
     # Build all_routes for transparency
     all_routes = sorted(

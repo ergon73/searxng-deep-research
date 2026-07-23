@@ -38,8 +38,10 @@ class TestFalsificationRoutes:
     def test_falsification_routes_includes(self, route):
         assert route in _FALSIFICATION_ROUTES
 
-    @pytest.mark.parametrize("route", ["general", "docs", "academic", "github",
-                                       "reviews", "forums", "wiki"])
+    @pytest.mark.parametrize(
+        "route",
+        ["general", "llm_release", "docs", "academic", "github", "reviews", "forums", "wiki"],
+    )
     def test_falsification_routes_excludes(self, route):
         assert route not in _FALSIFICATION_ROUTES
 
@@ -140,6 +142,20 @@ class TestNewsRoute:
             main = plan.search_tasks[0]
             # May be "day" / "week" / None — just check it's a string-or-None
             assert main.time_range is None or isinstance(main.time_range, str)
+
+
+class TestLlmReleaseRoute:
+    def test_radar_plan_has_source_specific_variants(self):
+        plan = build_research_plan("new LLM model releases in the last 48 hours July 2026")
+
+        assert plan.intent.route == "llm_release"
+        assert plan.intent.routing_warning is False
+        main = plan.search_tasks[0]
+        assert main.time_range == "week"
+        assert main.engines == "presearch,bing,mojeek"
+        variants = [task for task in plan.search_tasks if task.priority == 70]
+        assert len(variants) == 2
+        assert all(task.route == "llm_release" for task in variants)
 
 
 # ----------------------------------------------------------- security + falsif

@@ -35,6 +35,21 @@ class TestRouteClassification:
         assert i.time_range in ("day", "week", "month", "year")
         assert i.confidence >= 0.6
 
+    def test_route_llm_release_radar(self):
+        i = classify_intent("new LLM model releases in the last 48 hours July 2026")
+        assert i.route == "llm_release"
+        assert i.time_range == "week"
+        assert i.categories == "general"
+        assert i.engines == "presearch,bing,mojeek"
+        assert len(i.query_variants) == 2
+        assert any("official announcement" in query for query in i.query_variants)
+        assert any("Hugging Face" in query for query in i.query_variants)
+
+    def test_route_llm_release_radar_ru(self):
+        i = classify_intent("новые вышедшие LLM модели за последние 48 часов")
+        assert i.route == "llm_release"
+        assert i.time_range == "week"
+
     def test_route_news_ru(self):
         i = classify_intent("новости про БПЛА сегодня в Москве")
         assert i.route == "news"

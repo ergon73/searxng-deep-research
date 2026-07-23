@@ -299,6 +299,14 @@ class HuggingFaceDiscoveryReport:
         return len(self.signals)
 
     def to_dict(self) -> dict[str, Any]:
+        failed_channels = {error["channel"] for error in self.errors}
+
+        def window_complete(sort: str) -> bool:
+            relevant = [channel for channel in self.channels if channel["sort"] == sort]
+            return bool(relevant) and all(
+                not channel["truncated"] and channel["channel"] not in failed_channels for channel in relevant
+            )
+
         return {
             "source": "huggingface",
             "since": self.since.isoformat().replace("+00:00", "Z"),
@@ -308,6 +316,8 @@ class HuggingFaceDiscoveryReport:
             "channels": list(self.channels),
             "errors": list(self.errors),
             "truncated": any(bool(channel["truncated"]) for channel in self.channels),
+            "creation_window_complete": window_complete("createdAt"),
+            "modification_window_complete": window_complete("lastModified"),
             "candidates": [candidate.to_dict() for candidate in self.candidates],
         }
 
@@ -484,6 +494,8 @@ def discover_huggingface(
             channels.append(
                 {
                     "channel": channel,
+                    "pipeline_tag": pipeline_tag,
+                    "sort": sort,
                     "records": channel_records,
                     "pages": pages,
                     "truncated": truncated,

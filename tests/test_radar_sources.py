@@ -197,6 +197,8 @@ def test_discovery_merges_channels_and_reports_update_only():
     assert payload["fetched_records"] == 3
     assert payload["unique_signals"] == 2
     assert payload["errors"] == []
+    assert payload["creation_window_complete"] is True
+    assert payload["modification_window_complete"] is True
     assert len(payload["channels"]) == 2
     assert all(url.startswith("https://huggingface.co/api/models?") for url in requested_urls)
     by_family = {item["family_id"]: item for item in payload["candidates"]}
@@ -273,6 +275,7 @@ def test_discovery_paginates_until_window_boundary():
     assert report.channels[0]["pages"] == 2
     assert report.channels[0]["truncated"] is False
     assert report.unique_signals == 1
+    assert report.to_dict()["creation_window_complete"] is True
 
 
 def test_discovery_rejects_cross_host_pagination():
@@ -297,3 +300,4 @@ def test_discovery_rejects_cross_host_pagination():
     assert report.channels[0]["pages"] == 1
     assert report.channels[0]["truncated"] is True
     assert report.errors[0]["error"] == "unsafe pagination URL"
+    assert report.to_dict()["creation_window_complete"] is False

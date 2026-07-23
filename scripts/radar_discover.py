@@ -19,7 +19,7 @@ def main() -> int:
         help="Discovery buffer in hours; confirmation applies the exact report window later.",
     )
     parser.add_argument("--limit-per-channel", type=int, default=100)
-    parser.add_argument("--max-pages-per-channel", type=int, default=5)
+    parser.add_argument("--max-pages-per-channel", type=int, default=20)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--top", type=int, default=50)
     args = parser.parse_args()

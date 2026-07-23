@@ -57,7 +57,7 @@ unauthenticated Hugging Face API streams:
 PYTHONPATH=src python3 scripts/radar_discover.py \
   --since-hours 72 \
   --limit-per-channel 100 \
-  --max-pages-per-channel 5 \
+  --max-pages-per-channel 20 \
   --top 50
 ```
 
